@@ -1,0 +1,51 @@
+name: AidokuT 定制更新与发布
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 20 */2 * *'
+permissions:
+  contents: write
+concurrency:
+  group: aidokut-custom-release
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: macos-26
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: custom/nas-sync
+          fetch-depth: 0
+      - name: 合并官方正式版并保留定制
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/prepare-custom-release.sh
+      - name: 选择 Xcode
+        if: steps.source.outputs.build == 'true'
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - name: 编译定制 IPA
+        if: steps.source.outputs.build == 'true'
+        run: |
+          xcodebuild -project Aidoku.xcodeproj -scheme Aidoku -configuration Release -destination 'generic/platform=iOS' -archivePath build/AidokuT.xcarchive -skipPackagePluginValidation archive CODE_SIGN_IDENTITY= CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO OTHER_SWIFT_FLAGS=
+          bash Tests/run-nas-sync.sh build/AidokuT.xcarchive/Products/Applications/Aidoku.app/Aidoku.momd/0.9.mom
+          python3 scripts/package-custom-release.py
+      - name: 保存定制分支并发布
+        if: steps.source.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.source.outputs.tag }}
+        run: |
+          git push origin HEAD:custom/nas-sync
+          gh release create "$RELEASE_TAG" build/AidokuT.ipa build/aidokut-build.json --target "$(git rev-parse HEAD)" --title "AidokuT $RELEASE_TAG" --notes-file build/release-notes.txt --latest
+      - name: 保留构建结果
+        if: steps.source.outputs.build == 'true' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AidokuT-custom
+          path: |
+            build/AidokuT.ipa
+            build/aidokut-build.json
