@@ -47,6 +47,16 @@ actor SourceManager {
 
     private init() {
         sourceListURLs = AppSettings.browse.sourceLists.get()
+        // Seed personal subscriptions once, preserving existing lists and later user removals.
+        let bundledListsKey = "Data.bundledSourceLists.v2"
+        if !UserDefaults.standard.bool(forKey: bundledListsKey),
+           let resource = Bundle.main.url(forResource: "BundledSourceLists", withExtension: "plist"),
+           let data = try? Data(contentsOf: resource),
+           let strings = try? PropertyListDecoder().decode([String].self, from: data) {
+            sourceListURLs.formUnion(strings.compactMap(URL.init(string:)))
+            AppSettings.browse.sourceLists.set(sourceListURLs)
+            UserDefaults.standard.set(true, forKey: bundledListsKey)
+        }
         disabledSourceKeys = AppSettings.browse.disabledSources.get()
     }
 

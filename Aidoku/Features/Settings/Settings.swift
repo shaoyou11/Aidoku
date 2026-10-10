@@ -99,6 +99,15 @@ enum Settings {
                 ))
             ),
             .init(
+                key: "NASSync",
+                title: "NAS 同步",
+                value: .page(.init(
+                    items: [],
+                    inlineTitle: true,
+                    icon: .system(name: "externaldrive.connected.to.line.below", color: "blue")
+                ))
+            ),
+            .init(
                 title: NSLocalizedString("ICLOUD_SYNC"),
                 value: .page(.init(
                     items: [

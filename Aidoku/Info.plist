@@ -64,6 +64,8 @@
 	</array>
 	<key>ICLOUD_CONTAINER_ID</key>
 	<string>$(ICLOUD_CONTAINER_ID)</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>连接局域网 NAS，同步书架和阅读进度。</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>

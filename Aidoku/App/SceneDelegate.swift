@@ -66,10 +66,12 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneDidBecomeActive(_ scene: UIScene) {
+        NASSyncManager.shared.startAutomaticSync()
         contentHideView.removeFromSuperview()
     }
 
     func sceneDidEnterBackground(_ scene: UIScene) {
+        NASSyncManager.shared.stopAutomaticSync()
         if AppSettings.general.incognitoMode.get() {
             (scene as? UIWindowScene)?.windows.first?.addSubview(contentHideView)
         }

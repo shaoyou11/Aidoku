@@ -6,7 +6,7 @@
 //
 
 // base identifiers
-APP_ID_PREFIX               = app.aidoku
+APP_ID_PREFIX               = com.shaoyou11
 APP_ID_SUFFIX               = Aidoku
 
 PRODUCT_BUNDLE_IDENTIFIER   = $(APP_ID_PREFIX).$(APP_ID_SUFFIX)
@@ -17,4 +17,8 @@ UBIQUITY_KVSTORE_ID         = $(TeamIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER
 
 // Store build
 // Dev / sideload build (leave flag 'CANONICAL_BUILD' undefined)
-OTHER_SWIFT_FLAGS = $(inherited) -DCANONICAL_BUILD
+OTHER_SWIFT_FLAGS = $(inherited)
+
+// Local personal-team signing
+CODE_SIGN_ENTITLEMENTS = PersonalSigning.entitlements
+#include? "PersonalSigning.local.xcconfig"
