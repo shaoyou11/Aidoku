@@ -107,6 +107,7 @@ enum Settings {
                     icon: .system(name: "externaldrive.connected.to.line.below", color: "blue")
                 ))
             ),
+        ] + (CoreDataManager.supportsCloudSync ? [
             .init(
                 title: NSLocalizedString("ICLOUD_SYNC"),
                 value: .page(.init(
@@ -127,7 +128,8 @@ enum Settings {
                             : "ICLOUD_SYNC_TEXT_EXPERIMENTAL"
                     )
                 ))
-            ),
+            )
+        ] : []) + [
             .init(
                 title: NSLocalizedString("ADVANCED"),
                 value: .page(.init(

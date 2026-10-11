@@ -74,14 +74,14 @@ final class NASSyncManager: ObservableObject {
         automaticTask = nil
     }
 
-    func sync() async {
+    func sync(restoreOnly: Bool = false) async {
         guard !busy else { return }
         guard !AppSettings.general.icloudSync.get() else {
             status = "请先关闭 iCloud 同步，再使用 NAS 同步。"
             return
         }
         busy = true
-        status = "正在同步…"
+        status = restoreOnly ? "正在从 NAS 恢复…" : "正在同步…"
         defer { busy = false }
         do {
             let connection = try loadConnection()
@@ -96,10 +96,21 @@ final class NASSyncManager: ObservableObject {
             try saveState(local, to: stateURL) // persist unsent edits before touching the network
             let client = NASWebDAVClient(connection: connection)
             defer { client.close() }
-            let merged = try await client.synchronize(local)
+            let merged: NASSyncDocument
+            if restoreOnly {
+                let remote = try await client.read()
+                guard remote.etag != nil, remote.document.records.values.contains(where: { $0.value != nil }) else {
+                    status = "NAS 中没有可恢复的书架或阅读进度，请确认选择了原来的同步文件夹。"
+                    return
+                }
+                merged = local.restoring(remote.document)
+                try merged.validate()
+            } else {
+                merged = try await client.synchronize(local)
+            }
             try Task.checkCancellation()
             // Keep a recoverable local copy before any inbound changes. Never contains credentials.
-            try saveState(local, to: directory.appendingPathComponent("before-last-sync.json"))
+            try saveState(local, to: directory.appendingPathComponent(restoreOnly ? "before-last-restore.json" : "before-last-sync.json"))
             if context.hasChanges { try context.save() }
             let transaction = CoreDataManager.shared.container.newBackgroundContext()
             transaction.mergePolicy = NSErrorMergePolicy
@@ -113,7 +124,11 @@ final class NASSyncManager: ObservableObject {
             NotificationCenter.default.post(name: .updateHistory, object: nil)
             NotificationCenter.default.post(name: .updateCategories, object: nil)
             lastSync = Date()
-            status = applied.count == merged.records.count ? "同步完成" : "同步完成，期间的新修改将在下次同步"
+            if restoreOnly {
+                status = "恢复完成，已合并 NAS 书架和阅读进度；未上传修改 NAS 文件。"
+            } else {
+                status = applied.count == merged.records.count ? "同步完成" : "同步完成，期间的新修改将在下次同步"
+            }
         } catch is CancellationError {
             status = "同步已暂停，下次打开 App 时重试"
         } catch let error as NASSyncError {

@@ -31,6 +31,18 @@ struct NASSyncDocument: Codable, Equatable {
         return result
     }
 
+    /// Read-only restore imports live remote entries, without applying remote deletions.
+    /// A locally removed entry may be restored explicitly; newer local edits are retained.
+    func restoring(_ remote: Self) -> Self {
+        var result = self
+        for (key, incoming) in remote.records where incoming.value != nil {
+            if let current = result.records[key], current.value != nil,
+               !incoming.isNewer(than: current) { continue }
+            result.records[key] = incoming
+        }
+        return result
+    }
+
     func validate() throws {
         guard version == 1, records.count <= 100_000 else { throw NASSyncError.invalidDocument }
         for (key, record) in records {

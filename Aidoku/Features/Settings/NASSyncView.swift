@@ -5,6 +5,7 @@ struct NASSyncView: View {
     @State private var connection = NASConnection()
     @State private var automatic = false
     @State private var showFolders = false
+    @State private var confirmRestore = false
     @State private var message: String?
     @State private var savedConnection = NASConnection()
     private var dirty: Bool { connection != savedConnection }
@@ -57,6 +58,8 @@ struct NASSyncView: View {
                     }
                 }
                 .disabled(manager.busy || dirty || connection.folder.isEmpty)
+                Button("从 NAS 恢复书架与进度") { confirmRestore = true }
+                    .disabled(manager.busy || dirty || connection.folder.isEmpty)
                 Text(manager.status).foregroundStyle(.secondary)
                 if let date = manager.lastSync {
                     Text("最近完成：\(date.formatted(date: .numeric, time: .standard))")
@@ -68,13 +71,19 @@ struct NASSyncView: View {
             Section {
                 Text("同步书架、分类归属、章节已读状态和阅读位置。不同条目会合并，阅读进度按阅读时间处理，书架修改按本机检测到变更的时间处理。删除记录也会同步。请保持设备时间准确。")
                 Text("不上传漫画文件、图源账号或密码，也不同步本地导入漫画的书架和进度。其他设备需安装相同定制版本并配置相同图源。首次合并前会保留本机数据快照。")
-                Text("使用 NAS 同步前，请关闭 iCloud 同步。")
+                Text("换机或重装后：安装相同图源 → 选择原来的 NAS 同步文件夹 → 保存连接 → 点击“从 NAS 恢复书架与进度”。漫画图片需另行下载。恢复只读取 NAS，保留本机独有条目，重合条目按时间合并。")
+                if CoreDataManager.supportsCloudSync { Text("使用 NAS 同步前，请关闭 iCloud 同步。") }
             }
             .font(.footnote)
             .foregroundStyle(.secondary)
             if let message { Section { Text(message).font(.footnote) } }
         }
         .navigationTitle("NAS 同步")
+        .confirmationDialog("从当前 NAS 文件夹恢复？", isPresented: $confirmRestore, titleVisibility: .visible) {
+            Button("恢复书架与进度") { Task { await manager.sync(restoreOnly: true) } }
+        } message: {
+            Text("本次恢复只读取并合并，不清空本机书架，不上传覆盖 NAS；开启自动同步后仍会双向合并。恢复前保存本机快照，不恢复漫画图片或 NAS 中已删除的条目。")
+        }
         .sheet(isPresented: $showFolders) {
             NASFolderPicker(connection: connection) { folder in
                 connection.folder = folder.absoluteString

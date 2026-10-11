@@ -5,6 +5,7 @@ app=Path('build/AidokuT.xcarchive/Products/Applications/Aidoku.app')
 p=app/'Info.plist'
 info=plistlib.loads(p.read_bytes())
 info['CFBundleDisplayName']='AidokuT'
+info['AidokuTCloudSyncDisabled']=True
 from urllib.parse import urlsplit
 portal=os.environ.get('AIDOKUT_UPDATE_URL','').strip()
 parsed=urlsplit(portal)

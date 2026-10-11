@@ -27,7 +27,6 @@ extension SettingsView {
     var body: some View {
         List {
             if searchText.isEmpty {
-                AidokuTSignedUpdateSection()
                 ForEach(Self.settings.indices, id: \.self) { offset in
                     let setting = Self.settings[offset]
                     SettingView(setting: setting, onChange: onSettingChange)

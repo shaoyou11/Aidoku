@@ -45,8 +45,12 @@ final class CoreDataManager: @unchecked Sendable {
     /// Purging on every remote change notification would run once per save, so throttle it.
     private static let historyPurgeInterval: TimeInterval = 60 * 60
 
+    static var supportsCloudSync: Bool {
+        Bundle.main.object(forInfoDictionaryKey: "AidokuTCloudSyncDisabled") as? Bool != true
+    }
+
     private static var shouldUseiCloud: Bool {
-        AppSettings.general.icloudSync.get() && FileManager.default.ubiquityIdentityToken != nil
+        supportsCloudSync && AppSettings.general.icloudSync.get() && FileManager.default.ubiquityIdentityToken != nil
     }
 
     private init() {

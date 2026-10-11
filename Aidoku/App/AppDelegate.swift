@@ -148,6 +148,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             ]
         )
         AppSettings.registerDefaults()
+        if !CoreDataManager.supportsCloudSync { AppSettings.general.icloudSync.set(false) }
 
         // PlayCover fix: eagerly initialize the Core Data stack on the main thread
         // before any background migration task touches it. The `lazy var container`
@@ -163,7 +164,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // Do not call this method from your app’s main thread. Because this method might take a nontrivial amount of
         // time to set up iCloud and return the requested URL, you should always call it from a secondary thread.
         Task.detached {
-            let isiCloudAvailable = FileManager.default.url(forUbiquityContainerIdentifier: nil) != nil
+            let isiCloudAvailable = CoreDataManager.supportsCloudSync && FileManager.default.url(forUbiquityContainerIdentifier: nil) != nil
             if !isiCloudAvailable {
                 LogManager.logger.info("iCloud unavailable")
             }

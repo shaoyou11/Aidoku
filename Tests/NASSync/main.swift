@@ -55,3 +55,12 @@ do { try invalid.validate(); fatalError("invalid identifier accepted") } catch N
 invalid = .init(records: [bookA.key: .init(modified: Date(), device: "A", value: new)])
 do { try invalid.validate(); fatalError("mismatched payload accepted") } catch NASSyncError.invalidDocument {}
 print("PASS: 13 sync merge, deletion, offline conflict and validation checks")
+
+let restored = removal.restoring(union)
+expect(restored.records[bookA.key]?.value == bookA, "explicit restore revives live NAS entries despite local tombstones")
+expect(union.restoring(removal).records[bookA.key]?.value == bookA, "restore must not apply remote deletions")
+expect(a.restoring(b).records[bookA.key]?.value == bookA, "restore preserves local-only books")
+expect(b.restoring(a).records[new.key]?.value == new, "restore preserves newer local reading progress")
+expect(a.restoring(b).records[new.key]?.value == new, "restore imports newer NAS reading progress")
+expect(restored.restoring(union) == restored, "restore is idempotent")
+print("PASS: 6 read-only restore merge and preservation checks")
