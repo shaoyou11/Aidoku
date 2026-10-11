@@ -28,6 +28,8 @@ jobs:
         with:
           xcode-version: latest-stable
       - name: 编译定制 IPA
+        env:
+          AIDOKUT_UPDATE_URL: ${{ secrets.AIDOKUT_UPDATE_URL }}
         if: steps.source.outputs.build == 'true'
         run: |
           xcodebuild -project Aidoku.xcodeproj -scheme Aidoku -configuration Release -destination 'generic/platform=iOS' -archivePath build/AidokuT.xcarchive -skipPackagePluginValidation archive CODE_SIGN_IDENTITY= CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO OTHER_SWIFT_FLAGS=
