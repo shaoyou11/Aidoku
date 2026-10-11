@@ -9,6 +9,7 @@ import AidokuRunner
 import SwiftUI
 
 struct SourceHomeContentView: View {
+    @ObservedObject private var privacy = PrivacyDisplayStore.shared
     let source: AidokuRunner.Source
 
     @Binding var listings: [AidokuRunner.Listing]
@@ -224,7 +225,8 @@ struct SourceHomeContentView: View {
     }
 
     func homeView(for home: Home, partial: Bool) -> some View {
-        VStack(spacing: 24) {
+        let home = privacy.filtered(home, source: source)
+        return VStack(spacing: 24) {
             ForEach(home.components.indices, id: \.self) { offset in
                 let component = home.components[offset]
                 switch component.value {

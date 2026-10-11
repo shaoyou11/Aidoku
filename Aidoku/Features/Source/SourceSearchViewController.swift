@@ -132,7 +132,7 @@ extension SourceSearchViewController {
         willDisplay cell: UICollectionViewCell,
         forItemAt indexPath: IndexPath
     ) {
-        let mangaCount = viewModel.entries.count
+        let mangaCount = dataSource.snapshot().numberOfItems
         let hasMore = viewModel.hasMore
         if indexPath.row == mangaCount - 1 && hasMore {
             Task {

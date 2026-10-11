@@ -10,12 +10,13 @@ import SafariServices
 import SwiftUI
 
 struct HomeScrollerView: View {
+    @ObservedObject private var privacy = PrivacyDisplayStore.shared
     let source: AidokuRunner.Source
     let component: HomeComponent
     let partial: Bool
     let pressAction: ((AidokuRunner.Manga) -> Void)?
 
-    private let entries: [HomeComponent.Value.Link]
+    private let rawEntries: [HomeComponent.Value.Link]
     private let listing: AidokuRunner.Listing?
     private let hasSubtitles: Bool
 
@@ -40,9 +41,14 @@ struct HomeScrollerView: View {
         guard case let .scroller(entries, listing) = component.value else {
             fatalError("invalid component type")
         }
-        self.entries = entries
+        self.rawEntries = entries
         self.listing = listing
         self.hasSubtitles = entries.contains(where: { $0.subtitle != nil })
+    }
+
+    private var entries: [HomeComponent.Value.Link] {
+        guard privacy.allows(source) else { return [] }
+        return rawEntries.filter { if case .manga(let manga) = $0.value { return privacy.allows(manga) }; return !privacy.policy.hidesExplicit }
     }
 
     var body: some View {

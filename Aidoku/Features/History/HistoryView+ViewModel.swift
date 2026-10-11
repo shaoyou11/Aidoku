@@ -47,6 +47,10 @@ extension HistoryView {
 
 extension HistoryView.ViewModel {
     private func registerNotifications() {
+        NotificationCenter.default.publisher(for: .privacyDisplayChanged)
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.refilterHistory() }
+            }.store(in: &cancellables)
         NotificationCenter.default.publisher(for: .updateHistory)
             .sink { [weak self] _ in
                 // reset all cached history entries
@@ -444,6 +448,8 @@ extension HistoryView.ViewModel {
             newHistoryData[day] = newHistoryData[day]?.sorted { $0.date > $1.date }  // sort by date, most recent first
         }
 
+        await addMangaCacheItems(newMangaCacheItems)
+        await addChapterCacheItems(newChapterCacheItems)
         var newFilteredHistory = await filteredHistory
 
         // update data
@@ -454,8 +460,6 @@ extension HistoryView.ViewModel {
             )
         }
 
-        await addMangaCacheItems(newMangaCacheItems)
-        await addChapterCacheItems(newChapterCacheItems)
         await startMissingMangaQueueIfNeeded()
 
         await setHistoryData(newHistoryData)
@@ -473,6 +477,10 @@ extension HistoryView.ViewModel {
 
         for entry in entries {
             let mangaId = entry.chapterId.mangaIdentifier
+            let privacy = PrivacyDisplayStore.shared
+            guard privacy.policy.allows(mangaId),
+                mangaCache[mangaId].map({ privacy.allows($0) }) ?? !privacy.policy.hidesExplicit
+            else { continue }
             if let existingCount = counts[mangaId] {
                 counts[mangaId] = existingCount + 1
                 continue

@@ -279,6 +279,10 @@ struct HistoryView: View {
             }
         }
 
+        guard PrivacyDisplayStore.shared.policy.allows(mangaId),
+            manga.map({ PrivacyDisplayStore.shared.allows($0) }) ?? !PrivacyDisplayStore.shared.policy.hidesExplicit
+        else { return }
+
         let (chapters, nextChapter) = await MangaManager.shared.getNextChapter(
             mangaId: mangaId,
             fallbackChapters: manga?.chapters,

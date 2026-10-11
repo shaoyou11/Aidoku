@@ -13,11 +13,14 @@ struct NASSyncView: View {
     var body: some View {
         Form {
             Section {
-                TextField("WebDAV 地址（HTTPS / 局域网 HTTP）", text: $connection.folder)
+                TextField("优先地址（IPv6 / 域名）", text: $connection.folder)
                     .keyboardType(.URL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .privacySensitive()
+                TextField("备用地址（IPv4 / 域名，可留空）", text: Binding(get: { connection.fallbackFolder ?? "" }, set: { connection.fallbackFolder = $0 }))
+                    .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled().privacySensitive()
+                Toggle("允许 IPv6 HTTP 直连（不加密）", isOn: Binding(get: { connection.allowIPv6HTTP == true }, set: { connection.allowIPv6HTTP = $0 }))
                 TextField("用户名", text: $connection.username)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -37,7 +40,7 @@ struct NASSyncView: View {
             } header: {
                 Text("飞牛 NAS / WebDAV")
             } footer: {
-                Text("填写 WebDAV 服务地址和账号，连接后可浏览或新建同步文件夹。选好后点击“保存连接”。登录信息仅保存在本机钥匙串。HTTP 仅支持局域网 IPv4 地址，账号密码及同步内容不加密，请仅在可信网络中使用专用账号。")
+                Text("填写 WebDAV 服务地址和账号，连接后可浏览或新建同步文件夹。选好后点击“保存连接”。两个地址须指向同一 NAS 的同一文件夹；优先连接第一个，网络失败后用备用地址。只填一个则不切换。IPv6 字面地址用方括号包围，HTTPS 域名须匹配证书。登录信息仅保存在本机钥匙串；开启 HTTP 直连会明文传输账号及内容。")
             }
             .disabled(manager.busy)
 
@@ -69,6 +72,9 @@ struct NASSyncView: View {
                 Text("打开 App 时同步，使用期间每分钟同步一次。后台不保证执行。修改连接后请先保存。")
             }
             Section {
+                NavigationLink("NAS 漫画库") { NASComicLibraryView() }
+            } footer: { Text("漫画文件独立管理：上传已下载章节、浏览 NAS 目录、缓存阅读。书架与进度同步不包含漫画图片。") }
+            Section {
                 Text("同步书架、分类归属、章节已读状态和阅读位置。不同条目会合并，阅读进度按阅读时间处理，书架修改按本机检测到变更的时间处理。删除记录也会同步。请保持设备时间准确。")
                 Text("不上传漫画文件、图源账号或密码，也不同步本地导入漫画的书架和进度。其他设备需安装相同定制版本并配置相同图源。首次合并前会保留本机数据快照。")
                 Text("换机或重装后：安装相同图源 → 选择原来的 NAS 同步文件夹 → 保存连接 → 点击“从 NAS 恢复书架与进度”。漫画图片需另行下载。恢复只读取 NAS，保留本机独有条目，重合条目按时间合并。")
@@ -86,6 +92,10 @@ struct NASSyncView: View {
         }
         .sheet(isPresented: $showFolders) {
             NASFolderPicker(connection: connection) { folder in
+                if let secondary = try? connection.fallbackURL(), var components = URLComponents(url: secondary, resolvingAgainstBaseURL: false) {
+                    components.path = folder.path
+                    connection.fallbackFolder = components.url?.absoluteString
+                }
                 connection.folder = folder.absoluteString
                 message = "已选择同步文件夹，请点击“保存连接”。"
             }

@@ -8,11 +8,13 @@
 import SwiftUI
 
 struct DownloadsView: View {
+    @ObservedObject private var privacy = PrivacyDisplayStore.shared
     @StateObject private var viewModel = ViewModel()
     @EnvironmentObject private var path: NavigationCoordinator
 
     var body: some View {
         List {
+            Section { NavigationLink("NAS 漫画库") { NASComicLibraryView() } }
             Section {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
@@ -61,9 +63,9 @@ struct DownloadsView: View {
                         .listRowBackground(Color.clear)
                 }
             } else {
-                ForEach(viewModel.groupedManga, id: \.source) { group in
+                ForEach(viewModel.groupedManga.filter { $0.manga.contains { privacy.policy.allows($0.mangaIdentifier) } }, id: \.source) { group in
                     Section(header: Text(group.source)) {
-                        ForEach(group.manga) { manga in
+                        ForEach(group.manga.filter { privacy.policy.allows($0.mangaIdentifier) }) { manga in
                             NavigationLink(destination: DownloadedMangaView(manga: manga).environmentObject(path)) {
                                 DownloadedMangaRow(manga: manga)
                             }

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct NASFolderPicker: View {
     let connection: NASConnection
+    var title = "选择同步文件夹"
     let onSelect: (URL) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var target: URL?
@@ -9,6 +10,7 @@ struct NASFolderPicker: View {
     @State private var folders: [NASFolder] = []
     @State private var busy = false
     @State private var message: String?
+    @State private var requestID = UUID()
     @State private var newName = "Aidoku同步"
 
     var body: some View {
@@ -58,7 +60,7 @@ struct NASFolderPicker: View {
                     .disabled(busy)
                 }
             }
-            .navigationTitle("选择同步文件夹")
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
@@ -81,22 +83,26 @@ struct NASFolderPicker: View {
 
     @MainActor private func load() async {
         guard let target else { return }
+        let id = UUID()
+        requestID = id
         busy = true
         loaded = nil
         message = nil
-        defer { busy = false }
+        defer { if requestID == id { busy = false } }
         let client = NASWebDAVClient(connection: connection)
         defer { client.close() }
         do {
             let result = try await client.listFolders(at: target)
             try Task.checkCancellation()
+            guard requestID == id else { return }
+            message = nil
             folders = result
             loaded = target
         } catch is CancellationError {
             return
         } catch {
-            message = (error as? NASSyncError)?.localizedDescription
-                ?? "连接失败，请检查 WebDAV 地址、网络及 NAS 证书。"
+            guard requestID == id, !Task.isCancelled, (error as? URLError)?.code != .cancelled else { return }
+            message = NASConnection.message(for: error)
         }
     }
 

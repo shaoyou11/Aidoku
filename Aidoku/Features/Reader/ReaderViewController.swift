@@ -332,6 +332,32 @@ class ReaderViewController: BaseObservingViewController {
             guard let self else { return }
             self.reader?.setChapter(self.chapter, startPage: self.currentPage)
         }
+        addObserver(forName: .privacyDisplayChanged) { [weak self] _ in
+            guard let self, !PrivacyDisplayStore.shared.allows(self.manga) else { return }
+            self.view.isHidden = true
+            self.navigationController?.view.isHidden = true
+            self.dismiss(animated: false)
+        }
+        addObserver(forName: "NASReadingSourceChanged") { [weak self] notification in
+            guard let self, notification.object as? String == String(describing: self.manga.identifier) else { return }
+            let type: Reader = self.reader is ReaderWebtoonViewController ? .scroll : .paged
+            let page = self.currentPage
+            self.reader?.remove()
+            self.reader = nil
+            self.setReader(type)
+            self.reader?.setChapter(self.chapter, startPage: page)
+        }
+        addObserver(forName: "NASReadingError") { [weak self] notification in
+            guard let self, self.presentedViewController == nil else { return }
+            let alert = UIAlertController(title: "NAS 读取未完成", message: notification.object as? String, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "切换原图源", style: .default) { [weak self] _ in
+                guard let self else { return }
+                UserDefaults.standard.set("original", forKey: NASComicManager.sourcePreferenceKey(self.manga.identifier))
+                NotificationCenter.default.post(name: Notification.Name("NASReadingSourceChanged"), object: String(describing: self.manga.identifier))
+            })
+            alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+            self.present(alert, animated: true)
+        }
         // reload pages when processors change
         addObserver(forName: "Reader.downsampleImages", using: reloadBlock)
         addObserver(forName: "Reader.upscaleImages", using: reloadBlock)

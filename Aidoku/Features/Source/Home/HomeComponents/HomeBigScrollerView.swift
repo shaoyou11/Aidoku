@@ -9,11 +9,12 @@ import AidokuRunner
 import SwiftUI
 
 struct HomeBigScrollerView: View {
+    @ObservedObject private var privacy = PrivacyDisplayStore.shared
     let source: AidokuRunner.Source
     let component: HomeComponent
     let partial: Bool
 
-    private let entries: [AidokuRunner.Manga]
+    private let rawEntries: [AidokuRunner.Manga]
     private let autoScrollInterval: TimeInterval?
     private let hasTags: Bool
 
@@ -36,9 +37,14 @@ struct HomeBigScrollerView: View {
         guard case let .bigScroller(entries, autoScrollInterval) = component.value else {
             fatalError("invalid component type")
         }
-        self.entries = entries
+        self.rawEntries = entries
         self.autoScrollInterval = autoScrollInterval
         self.hasTags = entries.contains { !($0.tags?.isEmpty ?? true) }
+    }
+
+    private var entries: [AidokuRunner.Manga] {
+        guard privacy.allows(source) else { return [] }
+        return rawEntries.filter { privacy.allows($0) }
     }
 
     var body: some View {

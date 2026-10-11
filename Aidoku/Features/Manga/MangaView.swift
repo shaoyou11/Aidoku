@@ -23,6 +23,7 @@ struct MangaView: View {
     @State private var showRemoveSelectedConfirm = false
     @State private var showConnectionAlert = false
 
+    @ObservedObject private var privacy = PrivacyDisplayStore.shared
     @State private var detailsLoaded = false
     @State private var descriptionExpanded = false
 
@@ -253,6 +254,19 @@ struct MangaView: View {
                 )
                 .ignoresSafeArea()
                 .navigationTransitionZoom(sourceID: chapter, in: transitionNamespace)
+            }
+            .overlay {
+                if !privacy.allows(viewModel.manga) {
+                    ZStack {
+                        Color(uiColor: .systemBackground).ignoresSafeArea()
+                        VStack(spacing: 12) {
+                            Image(systemName: "eye.slash").font(.largeTitle)
+                            Text("此漫画已隐藏")
+                            Text("返回书架，连续三击底部书架可临时显示。")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }.padding()
+                    }
+                }
             }
             .environment(\.editMode, $editMode)
             .clearsStaleListSelection(selectedChapters)
@@ -596,6 +610,12 @@ extension MangaView {
 extension MangaView {
     @ToolbarContentBuilder
     var toolbarContentBase: some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
+            Button { privacy.toggleMarked(viewModel.manga.identifier) } label: {
+                Image(systemName: privacy.policy.marked.contains(viewModel.manga.identifier) ? "eye.slash.fill" : "eye.slash")
+            }
+            .accessibilityLabel(privacy.policy.marked.contains(viewModel.manga.identifier) ? "取消手动 NSFW 标记" : "标记为 NSFW 并隐藏")
+        }
         ToolbarItem(placement: .topBarTrailing) {
             rightNavbarButton
         }

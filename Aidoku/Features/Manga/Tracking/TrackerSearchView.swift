@@ -141,7 +141,7 @@ struct TrackerSearchView: View {
             .environment(\.autocorrectionDisabled, true)
             .task {
                 do {
-                    results = try await tracker.search(for: manga, includeNsfw: includeNsfw)
+                    results = try await tracker.search(for: manga, includeNsfw: includeNsfw && !PrivacyDisplayStore.shared.policy.hidesExplicit)
                 } catch {
                     LogManager.logger.error("Failed to search tracker \(tracker.id): \(error)")
                 }
@@ -165,7 +165,7 @@ struct TrackerSearchView: View {
             }
 
             do {
-                results = try await tracker.search(title: query, includeNsfw: includeNsfw)
+                results = try await tracker.search(title: query, includeNsfw: includeNsfw && !PrivacyDisplayStore.shared.policy.hidesExplicit)
             } catch {
                 LogManager.logger.error("Failed to search tracker \(tracker.id): \(error)")
                 withAnimation {

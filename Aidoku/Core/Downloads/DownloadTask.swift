@@ -353,6 +353,10 @@ extension DownloadTask {
         source: AidokuRunner.Source,
         tmpDirectory: URL
     ) async -> PageDownloadResult {
+        if page.url.scheme == "nascomic" {
+            let data = try? await NASComicManager.shared.onlineImageData(context: page.context)
+            return .init(page: page, data: data, targetPath: page.targetPath.appendingPathExtension("jpg"))
+        }
         let urlRequest = await source.getModifiedImageRequest(
             url: page.url,
             context: page.context

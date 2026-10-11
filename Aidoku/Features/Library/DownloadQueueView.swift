@@ -8,6 +8,7 @@
 import SwiftUI
 
 struct DownloadQueueView: View {
+    @ObservedObject private var privacy = PrivacyDisplayStore.shared
     @State private var queue: [(sourceId: String, downloads: [Download])] = []
     @State private var progress: [ChapterIdentifier: (progress: Int, total: Int)] = [:]
     @State private var isPaused = false
@@ -51,9 +52,9 @@ struct DownloadQueueView: View {
                     }
                 }
 
-                ForEach(queue, id: \.sourceId) { section in
+                ForEach(queue.filter { $0.downloads.contains { privacy.allows($0.manga) } }, id: \.sourceId) { section in
                     Section {
-                        ForEach(section.downloads) { download in
+                        ForEach(section.downloads.filter { privacy.allows($0.manga) }) { download in
                             HStack {
                                 MangaCoverView(
                                     source: nil,

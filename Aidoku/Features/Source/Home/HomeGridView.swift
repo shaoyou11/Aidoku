@@ -9,6 +9,7 @@ import AidokuRunner
 import SwiftUI
 
 struct HomeGridView: View {
+    @ObservedObject private var privacy = PrivacyDisplayStore.shared
     let source: AidokuRunner.Source
     let entries: [AidokuRunner.Manga]
     @Binding var bookmarkedItems: Set<String>
@@ -83,7 +84,9 @@ struct HomeGridView: View {
             spacing: Self.spacing
         ) {
             ForEach(entries.indices, id: \.self) { index in
-                mangaGridItem(entry: entries[index])
+                if privacy.allows(source), privacy.allows(entries[index]) {
+                    mangaGridItem(entry: entries[index])
+                }
             }
             loadMoreView
         }

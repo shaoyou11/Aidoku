@@ -73,6 +73,7 @@ class TabBarController: UITabBarController {
         super.viewDidLoad()
 
         delegate = self
+        Task { await PrivacyDisplayStore.shared.refreshKnownRatings() }
 
         let libraryViewController = NavigationController(rootViewController: LibraryViewController())
         let browseViewController = NavigationController(rootViewController: BrowseViewController())
@@ -313,6 +314,9 @@ extension TabBarController: UITabBarControllerDelegate {
 
     @available(iOS 18.0, *)
     func tabBarController(_ tabBarController: UITabBarController, shouldSelectTab tab: UITab) -> Bool {
+        if #available(iOS 26.0, *) {
+            PrivacyDisplayStore.shared.libraryTabTapped(isLibrary: tab.identifier == "0")
+        }
         if tab === tabBarController.selectedTab {
             checkForHistoryReselection()
         }
@@ -320,6 +324,9 @@ extension TabBarController: UITabBarControllerDelegate {
     }
 
     func tabBarController(_ tabBarController: UITabBarController, shouldSelect viewController: UIViewController) -> Bool {
+        if #unavailable(iOS 26.0) {
+            PrivacyDisplayStore.shared.libraryTabTapped(isLibrary: viewController.tabBarItem.tag == 0)
+        }
         if viewController === selectedViewController {
             checkForHistoryReselection()
         }

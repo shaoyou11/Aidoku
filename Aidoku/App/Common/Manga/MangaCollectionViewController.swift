@@ -83,12 +83,15 @@ class MangaCollectionViewController: BaseCollectionViewController {
 
     override func observe() {
         super.observe()
+        addObserver(forName: .privacyDisplayChanged) { [weak self] _ in
+            self?.updateDataSource()
+        }
 
         addObserver(forName: .addToLibrary) { [weak self] notification in
             guard
                 let self,
                 let id = notification.object as? MangaIdentifier,
-                let index = self.entries.firstIndex(where: { $0.identifier == id }),
+                let index = self.dataSource.snapshot().itemIdentifiers.firstIndex(where: { $0.identifier == id }),
                 let entry = self.dataSource.itemIdentifier(for: IndexPath(item: index, section: 0))
             else {
                 return
@@ -104,7 +107,7 @@ class MangaCollectionViewController: BaseCollectionViewController {
             guard
                 let self,
                 let id = notification.object as? MangaIdentifier,
-                let index = self.entries.firstIndex(where: { $0.identifier == id }),
+                let index = self.dataSource.snapshot().itemIdentifiers.firstIndex(where: { $0.identifier == id }),
                 let entry = self.dataSource.itemIdentifier(for: IndexPath(item: index, section: 0))
             else {
                 return
@@ -193,7 +196,7 @@ extension MangaCollectionViewController {
     func updateDataSource() {
         var snapshot = NSDiffableDataSourceSnapshot<Section, AidokuRunner.Manga>()
         snapshot.appendSections([.regular])
-        snapshot.appendItems(entries.unique(), toSection: .regular)
+        snapshot.appendItems(entries.unique().filter { PrivacyDisplayStore.shared.allows($0) }, toSection: .regular)
         dataSource.apply(snapshot)
     }
 

@@ -28,7 +28,7 @@ final class NASFolderListing: NSObject, XMLParserDelegate {
         var found: [String: NASFolder] = [:]
         var foundSelf = false
         for href in delegate.rows {
-            guard let url = URL(string: href, relativeTo: base)?.absoluteURL.standardized,
+            guard let url = URL(string: NASConnection.encodedHref(href), relativeTo: base)?.absoluteURL.standardized,
                   url.scheme == base.scheme, url.host == base.host, url.port == base.port,
                   url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else { continue }
             let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))

@@ -206,6 +206,7 @@ extension LibraryViewModel {
     // swiftlint:disable:next cyclomatic_complexity
     func loadLibrary() async {
         // handle filter groups
+        let privacy = PrivacyDisplayStore.shared.policy
         let filters = self.activeFilters
         let currentCategory = (isInUncategorizedCategory || isInRealCategory) ? self.currentCategory : nil
 
@@ -256,6 +257,8 @@ extension LibraryViewModel {
                 else {
                     continue
                 }
+
+                guard privacy.allows(mangaObject.identifier, rating: Int(mangaObject.nsfw)) else { continue }
 
                 let categories = (libraryObject.categories?.allObjects as? [CategoryObject])?.map { $0.title } ?? []
 
@@ -357,6 +360,11 @@ extension LibraryViewModel {
         }
 
         guard success else { return }
+        // Do not apply an in-flight revealed snapshot after the app has hidden content.
+        guard privacy == PrivacyDisplayStore.shared.policy else {
+            await loadLibrary()
+            return
+        }
 
         self.pinnedManga = pinnedManga
         self.manga = manga

@@ -175,7 +175,7 @@ extension ReaderPageView {
     }
 
     static func imageRequest(url: URL, context: PageContext? = nil, source: AidokuRunner.Source?) async -> ImageRequest {
-        let urlRequest = if !url.isFileURL, let source {
+        let urlRequest = if !url.isFileURL, url.scheme != "nascomic", let source {
             await source.getModifiedImageRequest(url: url, context: context)
         } else {
             URLRequest(url: url)
@@ -187,7 +187,7 @@ extension ReaderPageView {
             // only process pages if the source supports it and the image isn't downloaded
             // note: also skips processing raw data pages (assuming final data is already provided and doesn't need to be modified)
             //       this should probably be changed in the future to be more correct though
-            if source.features.processesPages, !url.isFileURL {
+            if source.features.processesPages, !url.isFileURL, url.scheme != "nascomic" {
                 processors.append(PageInterceptorProcessor(source: source, pageContext: context))
                 usePageProcessor = true
             }
@@ -201,6 +201,11 @@ extension ReaderPageView {
             processors.append(UpscaleProcessor())
         }
 
+        if url.scheme == "nascomic" {
+            return ImageRequest(id: url.absoluteString, data: {
+                try await NASComicManager.shared.onlineImageData(context: context)
+            }, processors: processors)
+        }
         return ImageRequest(
             urlRequest: urlRequest,
             processors: processors,

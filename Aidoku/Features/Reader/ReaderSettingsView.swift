@@ -12,6 +12,7 @@ struct ReaderSettingsView: View {
     let reader: ReaderViewController.Reader
     let chapterLanguage: String?
 
+    @State private var nasReadingSource = "nas"
     @State private var sourceLanguageCodes: [String] = []
     @State private var sourceLanguageTitles: [String] = []
 
@@ -61,6 +62,21 @@ struct ReaderSettingsView: View {
     var body: some View {
         PlatformNavigationStack {
             List {
+                if reader != .text && mangaId.sourceKey != NASSourceRunner.sourceKey && mangaId.sourceKey != LocalSourceRunner.sourceKey {
+                    Section {
+                        Picker("读取来源", selection: $nasReadingSource) {
+                            Text("NAS 优先").tag("nas")
+                            Text("原图源").tag("original")
+                        }
+                        .onChange(of: nasReadingSource) { value in
+                            let key = NASComicManager.sourcePreferenceKey(mangaId)
+                            guard UserDefaults.standard.string(forKey: key) != value else { return }
+                            UserDefaults.standard.set(value, forKey: key)
+                            NotificationCenter.default.post(name: Notification.Name("NASReadingSourceChanged"), object: String(describing: mangaId))
+                        }
+                        .onAppear { nasReadingSource = UserDefaults.standard.string(forKey: NASComicManager.sourcePreferenceKey(mangaId)) ?? "nas" }
+                    } footer: { Text("上传过的章节优先从 NAS 按页读取；未上传则使用原有下载或图源。切换立即重新读取当前章节，并记住这本漫画的选择。") }
+                }
                 generalSection
 
                 if #available(iOS 18.0, *), reader != .text {

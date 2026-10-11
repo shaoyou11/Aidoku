@@ -9,10 +9,13 @@ import AidokuRunner
 import SwiftUI
 
 struct DownloadedMangaView: View {
+    @ObservedObject private var privacy = PrivacyDisplayStore.shared
     @StateObject private var viewModel: ViewModel
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var path: NavigationCoordinator
 
+    @State private var showNASUpload = false
+    @State private var nasChapters: [DownloadedChapterInfo] = []
     @State private var openChapter: DownloadedChapterInfo?
 
     @Namespace private var transitionNamespace
@@ -21,9 +24,18 @@ struct DownloadedMangaView: View {
         self._viewModel = StateObject(wrappedValue: .init(manga: manga))
     }
 
+    private var contentHidden: Bool {
+        !privacy.policy.allows(viewModel.manga.mangaIdentifier)
+    }
+
     var body: some View {
         Group {
-            if viewModel.chapters.isEmpty {
+            if contentHidden {
+                UnavailableView(
+                    "内容已隐藏", systemImage: "eye.slash",
+                    description: Text("返回书架，连续三击底部书架可临时显示。")
+                )
+            } else if viewModel.chapters.isEmpty {
                 if viewModel.isLoading {
                     ProgressView(NSLocalizedString("LOADING_ELLIPSIS"))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -34,7 +46,13 @@ struct DownloadedMangaView: View {
                 chaptersList
             }
         }
-        .navigationTitle(viewModel.manga.displayTitle)
+        .navigationTitle(contentHidden ? "下载详情" : viewModel.manga.displayTitle)
+        .onChange(of: contentHidden) { hidden in
+            if hidden {
+                showNASUpload = false
+                openChapter = nil
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -56,6 +74,12 @@ struct DownloadedMangaView: View {
                         }
                     }
 
+                    if viewModel.chapters.contains(where: { !$0.failed }) {
+                        Button {
+                            nasChapters = viewModel.chapters.filter { !$0.failed }
+                            showNASUpload = true
+                        } label: { Label("上传已下载章节到 NAS", systemImage: "externaldrive.badge.plus") }
+                    }
                     if !viewModel.chapters.isEmpty {
                         Section {
                             Button(role: .destructive, action: viewModel.confirmDeleteAll) {
@@ -66,8 +90,10 @@ struct DownloadedMangaView: View {
                 } label: {
                     MoreIcon()
                 }
+                .disabled(contentHidden)
             }
         }
+        .sheet(isPresented: $showNASUpload) { NASComicUploadView(manga: viewModel.manga, chapters: nasChapters) }
         .task {
             await viewModel.loadChapters()
             await viewModel.loadHistory()
@@ -122,6 +148,10 @@ struct DownloadedMangaView: View {
                             } label: {
                                 Label(NSLocalizedString("SHARE"), systemImage: "square.and.arrow.up")
                             }
+                            Button {
+                                nasChapters = [chapter]
+                                showNASUpload = true
+                            } label: { Label("上传本章到 NAS", systemImage: "externaldrive.badge.plus") }
                         }
                     }
                     .matchedTransitionSourcePlease(id: chapter, in: transitionNamespace)

@@ -84,7 +84,7 @@ extension MangaListViewController {
         willDisplay cell: UICollectionViewCell,
         forItemAt indexPath: IndexPath
     ) {
-        if indexPath.row == entries.count - 1 && hasMore {
+        if indexPath.row == dataSource.snapshot().numberOfItems - 1 && hasMore {
             Task {
                 await loadEntries()
             }

@@ -720,3 +720,19 @@ extension DownloadManager {
         let description: String?
     }
 }
+
+extension DownloadManager {
+    /// Make a private, unique copy for a NAS transfer without moving or deleting the local download.
+    func makeNASArchive(for chapter: ChapterIdentifier) throws -> URL {
+        let source = cache.directory(for: chapter)
+        let archive = source.appendingPathExtension("cbz")
+        let target = FileManager.default.temporaryDirectory.appendingPathComponent("nas-" + UUID().uuidString + ".cbz")
+        if archive.exists {
+            try FileManager.default.copyItem(at: archive, to: target)
+        } else {
+            guard source.exists, !cache.tmpDirectory(for: chapter).exists else { throw NASComicError.invalidArchive }
+            try FileManager.default.zipItem(at: source, to: target, shouldKeepParent: false)
+        }
+        return target
+    }
+}

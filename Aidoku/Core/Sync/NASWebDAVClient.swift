@@ -1,19 +1,57 @@
 import Foundation
+import Darwin
 
 struct NASConnection: Codable, Equatable {
     var folder = ""
     var username = ""
     var password = ""
+    var fallbackFolder: String? = nil
+    var allowIPv6HTTP: Bool? = false
 
     func folderURL() throws -> URL {
         guard let url = URL(string: folder.trimmingCharacters(in: .whitespacesAndNewlines)),
               let host = url.host,
               url.scheme?.lowercased() == "https"
-                || (url.scheme?.lowercased() == "http" && Self.isPrivateIPv4(host)),
+                || (url.scheme?.lowercased() == "http" && (Self.isPrivateIPv4(host) || (allowIPv6HTTP == true && Self.isIPv6(host)))),
               url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else {
             throw NASSyncError.invalidAddress
         }
         return url.appendingPathComponent("", isDirectory: true)
+    }
+    func fallbackURL() throws -> URL {
+        guard let fallbackFolder, !fallbackFolder.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw NASSyncError.invalidAddress }
+        var alternate = self
+        alternate.folder = fallbackFolder
+        return try alternate.folderURL()
+    }
+    static func encodedHref(_ href: String) -> String {
+        // Some WebDAV servers return raw Chinese names alongside escaped spaces.
+        // Preserve valid escapes while escaping non-ASCII characters once.
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~:/?#[]@!$&'()*+,;=%")
+        return href.addingPercentEncoding(withAllowedCharacters: allowed) ?? href
+    }
+    static func isIPv6(_ host: String) -> Bool {
+        let host = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        var address = in6_addr()
+        return host.withCString { inet_pton(AF_INET6, $0, &address) } == 1
+    }
+    static func sameOrigin(_ lhs: URL, _ rhs: URL) -> Bool {
+        func port(_ url: URL) -> Int { url.port ?? (url.scheme?.lowercased() == "https" ? 443 : 80) }
+        return lhs.scheme?.lowercased() == rhs.scheme?.lowercased()
+            && lhs.host?.lowercased() == rhs.host?.lowercased() && port(lhs) == port(rhs)
+    }
+    static func message(for error: Error) -> String {
+        if let error = error as? NASSyncError { return error.localizedDescription }
+        if let error = error as? NASComicError { return error.localizedDescription }
+        switch (error as? URLError)?.code {
+        case .cancelled: return "操作已取消，可以重试。"
+        case .timedOut: return "连接超时，请检查 NAS 是否在线及 IPv6 网络是否可达。"
+        case .notConnectedToInternet, .networkConnectionLost: return "网络已断开，请联网后重试。"
+        case .cannotFindHost, .dnsLookupFailed: return "无法解析服务器地址，请检查域名或 IPv6 地址格式。"
+        case .serverCertificateUntrusted, .serverCertificateHasBadDate, .serverCertificateHasUnknownRoot, .secureConnectionFailed:
+            return "HTTPS 证书校验失败。IPv6 直连时请使用证书匹配的域名；不会忽略证书校验。"
+        default: return "未能连接 NAS，请检查 WebDAV 服务、网络和访问权限。"
+        }
     }
     // Only literal RFC 1918 addresses may use unencrypted WebDAV.
     // Hostnames are excluded so DNS cannot move an HTTP connection onto the public Internet.
@@ -40,12 +78,15 @@ struct NASConnection: Codable, Equatable {
 final class NASWebDAVClient: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     private let connection: NASConnection
     private var session: URLSession!
+    private let router: NASRequestRouter
+    var routeLabel: String { router.routeLabel }
     static let maxBytes = 25 * 1024 * 1024
 
     init(connection: NASConnection, configuration: URLSessionConfiguration = .ephemeral) {
         self.connection = connection
+        self.router = NASRequestRouter(connection: connection)
         super.init()
-        configuration.timeoutIntervalForRequest = 30
+        configuration.timeoutIntervalForRequest = 12
         configuration.timeoutIntervalForResource = 90
         configuration.httpCookieStorage = nil
         configuration.urlCredentialStorage = nil
@@ -81,15 +122,23 @@ final class NASWebDAVClient: NSObject, URLSessionTaskDelegate, @unchecked Sendab
         request.setValue("1", forHTTPHeaderField: "Depth")
         request.setValue("application/xml; charset=utf-8", forHTTPHeaderField: "Content-Type")
         request.httpBody = Data("<d:propfind xmlns:d=\"DAV:\"><d:prop><d:resourcetype/></d:prop></d:propfind>".utf8)
-        let (bytes, response) = try await session.bytes(for: request)
-        guard let response = response as? HTTPURLResponse else { throw NASSyncError.http(0) }
-        try check(response.statusCode, allowed: [207])
-        var data = Data()
-        for try await byte in bytes {
-            guard data.count < Self.maxBytes else { throw NASSyncError.tooLarge }
-            data.append(byte)
+        let (data, response) = try await router.send(request) { request in
+            let (bytes, response) = try await self.session.bytes(for: request)
+            defer { bytes.task.cancel() }
+            guard let response = response as? HTTPURLResponse else { throw NASSyncError.http(0) }
+            try self.check(response.statusCode, allowed: [207])
+            guard response.expectedContentLength <= Self.maxBytes else { throw NASSyncError.tooLarge }
+            var data = Data()
+            for try await byte in bytes {
+                guard data.count < Self.maxBytes else { throw NASSyncError.tooLarge }
+                data.append(byte)
+            }
+            return (data, response)
         }
-        return try NASFolderListing.decode(data, at: folder)
+        let actualFolder = response.url ?? folder
+        return try NASFolderListing.decode(data, at: actualFolder).map {
+            NASFolder(url: try router.logicalURL($0.url), name: $0.name)
+        }
     }
 
     func createFolder(named name: String, in parent: URL) async throws -> URL {
@@ -103,7 +152,7 @@ final class NASWebDAVClient: NSObject, URLSessionTaskDelegate, @unchecked Sendab
             throw NASSyncError.invalidAddress
         }
         let url = parent.appendingPathComponent(name, isDirectory: true)
-        let (_, response) = try await session.data(for: request("MKCOL", url: url))
+        let (_, response) = try await router.send(request("MKCOL", url: url)) { try await self.session.data(for: $0) }
         guard let response = response as? HTTPURLResponse else { throw NASSyncError.http(0) }
         if response.statusCode == 405 { throw NASSyncError.folderExists }
         try check(response.statusCode, allowed: [201])
@@ -133,25 +182,28 @@ final class NASWebDAVClient: NSObject, URLSessionTaskDelegate, @unchecked Sendab
     }
 
     func read() async throws -> (document: NASSyncDocument, etag: String?) {
-        let (bytes, response) = try await session.bytes(for: request("GET"))
-        guard let response = response as? HTTPURLResponse else { throw NASSyncError.http(0) }
-        if response.statusCode == 404 { return (.init(), nil) }
-        try check(response.statusCode, allowed: [200])
-        guard response.expectedContentLength <= Self.maxBytes else { throw NASSyncError.tooLarge }
-        guard let etag = response.value(forHTTPHeaderField: "ETag"),
-              etag.hasPrefix("\""), etag.hasSuffix("\""), !etag.contains("\n") else {
-            throw NASSyncError.unsupportedServer
+        try await router.send(request("GET")) { request in
+            let (bytes, response) = try await self.session.bytes(for: request)
+            defer { bytes.task.cancel() }
+            guard let response = response as? HTTPURLResponse else { throw NASSyncError.http(0) }
+            if response.statusCode == 404 { return (NASSyncDocument(), nil as String?) }
+            try self.check(response.statusCode, allowed: [200])
+            guard response.expectedContentLength <= Self.maxBytes else { throw NASSyncError.tooLarge }
+            guard let etag = response.value(forHTTPHeaderField: "ETag"),
+                  etag.hasPrefix("\""), etag.hasSuffix("\""), !etag.contains("\n") else {
+                throw NASSyncError.unsupportedServer
+            }
+            var data = Data()
+            for try await byte in bytes {
+                guard data.count < Self.maxBytes else { throw NASSyncError.tooLarge }
+                data.append(byte)
+            }
+            guard let document = try? JSONDecoder().decode(NASSyncDocument.self, from: data) else {
+                throw NASSyncError.invalidDocument
+            }
+            try document.validate()
+            return (document, etag)
         }
-        var data = Data()
-        for try await byte in bytes {
-            guard data.count < Self.maxBytes else { throw NASSyncError.tooLarge }
-            data.append(byte)
-        }
-        guard let document = try? JSONDecoder().decode(NASSyncDocument.self, from: data) else {
-            throw NASSyncError.invalidDocument
-        }
-        try document.validate()
-        return (document, etag)
     }
 
     func write(_ document: NASSyncDocument, etag: String?) async throws {
@@ -163,7 +215,7 @@ final class NASWebDAVClient: NSObject, URLSessionTaskDelegate, @unchecked Sendab
         let data = try encoder.encode(document)
         guard data.count <= Self.maxBytes else { throw NASSyncError.tooLarge }
         request.httpBody = data
-        let (_, response) = try await session.data(for: request)
+        let (_, response) = try await router.send(request) { try await self.session.data(for: $0) }
         guard let response = response as? HTTPURLResponse else { throw NASSyncError.http(0) }
         try check(response.statusCode, allowed: [200, 201, 204])
     }

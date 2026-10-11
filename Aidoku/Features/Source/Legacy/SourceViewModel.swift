@@ -11,6 +11,7 @@ actor SourceViewModel {
     weak var source: Source?
 
     var manga: [MangaInfo] = []
+    var contentRatings: [MangaIdentifier: Int] = [:]
     var listings: [Listing] = []
     var filters: [FilterBase] = []
 
@@ -48,6 +49,7 @@ actor SourceViewModel {
     func loadNextMangaPage() async {
         guard let source = source else { return }
         if currentPage == nil {
+            contentRatings = [:]
             manga = []
         }
         let page = (currentPage ?? 0) + 1
@@ -64,6 +66,9 @@ actor SourceViewModel {
         } else {
             // load regular manga list
             result = try? await source.getMangaList(filters: selectedFilters.filters, page: page)
+        }
+        for entry in result?.manga ?? [] {
+            contentRatings[entry.identifier] = entry.nsfw.rawValue
         }
         let mangaInfo = result?.manga.map { $0.toInfo() } ?? []
         currentPage = page

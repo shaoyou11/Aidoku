@@ -10,6 +10,7 @@ import SafariServices
 import SwiftUI
 
 struct HomeListView: View {
+    @ObservedObject private var privacy = PrivacyDisplayStore.shared
     let source: AidokuRunner.Source
     let component: HomeComponent
     let partial: Bool
@@ -19,7 +20,7 @@ struct HomeListView: View {
 
     private let ranking: Bool
     private let pageSize: Int?
-    private let entries: [HomeComponent.Value.Link]
+    private let rawEntries: [HomeComponent.Value.Link]
     private let listing: AidokuRunner.Listing?
 
     private let usesBookmarksState: Bool
@@ -58,8 +59,13 @@ struct HomeListView: View {
         }
         self.ranking = ranking
         self.pageSize = pageSize
-        self.entries = entries
+        self.rawEntries = entries
         self.listing = listing
+    }
+
+    private var entries: [HomeComponent.Value.Link] {
+        guard privacy.allows(source) else { return [] }
+        return rawEntries.filter { if case .manga(let manga) = $0.value { return privacy.allows(manga) }; return !privacy.policy.hidesExplicit }
     }
 
     var body: some View {

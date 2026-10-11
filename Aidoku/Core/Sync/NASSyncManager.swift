@@ -38,6 +38,7 @@ final class NASSyncManager: ObservableObject {
 
     func saveConnection(_ connection: NASConnection) throws {
         _ = try connection.fileURL()
+        if let secondary = connection.fallbackFolder, !secondary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { _ = try connection.fallbackURL() }
         guard !connection.username.isEmpty, !connection.username.contains(":"), !connection.password.isEmpty else {
             throw NASSyncError.authentication
         }
@@ -129,13 +130,15 @@ final class NASSyncManager: ObservableObject {
             } else {
                 status = applied.count == merged.records.count ? "同步完成" : "同步完成，期间的新修改将在下次同步"
             }
+            status += " · " + client.routeLabel
         } catch is CancellationError {
             status = "同步已暂停，下次打开 App 时重试"
         } catch let error as NASSyncError {
             status = error.localizedDescription
         } catch {
             // URLSession/Core Data errors can embed private server addresses. Never display raw errors.
-            status = "同步未完成，请检查网络、NAS 证书和本机存储后重试。本机修改已保留。"
+            if (error as? URLError)?.code == .cancelled { return }
+            status = NASConnection.message(for: error) + " 本机修改已保留。"
         }
     }
 

@@ -118,6 +118,9 @@ class BrowseViewController: BaseTableViewController {
 
     override func observe() {
         // source installed/imported/pinned
+        addObserver(forName: .privacyDisplayChanged) { [weak self] _ in
+            self?.updateDataSource()
+        }
         addObserver(forName: .updateSourceList) { [weak self] _ in
             guard let self = self else { return }
             Task { @MainActor in
@@ -146,7 +149,11 @@ class BrowseViewController: BaseTableViewController {
         dataSource.onReorder = { [weak self] snapshot in
             guard let self = self else { return }
             let sourceList = snapshot.itemIdentifiers(inSection: .pinned).map { $0.info.sourceId }
-            AppSettings.browse.pinnedList.set(sourceList)
+            let hiddenPins = AppSettings.browse.pinnedList.get().filter { key in
+                !sourceList.contains(key) && PrivacyDisplayStore.shared.policy.hidesExplicit
+                    && self.viewModel.pinnedSources.contains { $0.sourceId == key && $0.contentRating == .primarilyNsfw }
+            }
+            AppSettings.browse.pinnedList.set(sourceList + hiddenPins)
 
             if sourceList.isEmpty { self.stopEditing() }
             Task { @MainActor in
@@ -467,7 +474,9 @@ extension BrowseViewController {
     private func sourceItems(_ sources: [SourceInfo], in section: Section) -> [SourceItem] {
         var seenSourceIds = Set<String>()
         return sources.compactMap { info in
-            guard seenSourceIds.insert(info.sourceId).inserted else { return nil }
+            guard seenSourceIds.insert(info.sourceId).inserted,
+                !PrivacyDisplayStore.shared.policy.hidesExplicit || info.contentRating != .primarilyNsfw
+            else { return nil }
             return SourceItem(section: section, info: info)
         }
     }

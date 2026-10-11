@@ -11,6 +11,7 @@ import Foundation
 enum CustomSourceConfig {
     case demo
     case local
+    case nas
     case komga(KeyNameServer)
     case kavita(KeyNameServer)
     case suwayomi(KeyNameServer)
@@ -29,6 +30,8 @@ extension CustomSourceConfig {
                 .demo()
             case .local:
                 .local()
+            case .nas:
+                .nas()
             case let .komga(config):
                 .komga(key: config.key, name: config.name, server: config.server)
             case let .kavita(config):
@@ -85,6 +88,8 @@ extension CustomSourceConfig {
                 let name = try decodeString()
                 let server = try decodeString()
                 self = .suwayomi(.init(key: key, name: name, server: server))
+            case 5:
+                self = .nas
             default:
                 throw DecodingError.dataCorrupted(.init(
                     codingPath: [],
@@ -108,6 +113,8 @@ extension CustomSourceConfig {
                 }
             case .local:
                 bytes.append(2)
+            case .nas:
+                bytes.append(5)
             case let .kavita(config):
                 bytes.append(3)
                 for string in [config.key, config.name, config.server] {

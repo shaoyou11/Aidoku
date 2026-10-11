@@ -10,6 +10,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct AddSourceView: View {
+    @ObservedObject private var privacy = PrivacyDisplayStore.shared
     let allExternalSources: [ExternalSourceInfo]
 
     @State private var externalSources: [SourceInfo] = []
@@ -93,7 +94,7 @@ struct AddSourceView: View {
                             Text(NSLocalizedString("NO_RESULTS"))
                                 .frame(maxWidth: .infinity)
                         } else {
-                            ForEach(filteredSources, id: \.sourceId) { source in
+                            ForEach(filteredSources.filter { !privacy.policy.hidesExplicit || $0.contentRating != .primarilyNsfw }, id: \.sourceId) { source in
                                 ExternalSourceTableCell(source: source, onInstall: {
                                     Task {
                                         let index = externalSources.firstIndex(of: source)

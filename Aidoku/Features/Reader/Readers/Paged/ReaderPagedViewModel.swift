@@ -60,7 +60,18 @@ class ReaderPagedViewModel {
             chapterKey: chapter.key
         )
         let language = chapter.language ?? source?.languages.first
-        let isDownloaded = DownloadManager.shared.isChapterDownloaded(chapter: identifier)
+        let originalOnly = UserDefaults.standard.string(forKey: NASComicManager.sourcePreferenceKey(manga.identifier)) == "original"
+        if !originalOnly && manga.sourceKey != NASSourceRunner.sourceKey {
+            do {
+                if let nasPages = try await NASComicManager.shared.linkedPages(manga: manga, chapter: chapter) {
+                    return nasPages.map { $0.toOld(sourceId: sourceId, chapterId: chapter.key, language: language) }
+                }
+            } catch {
+                NotificationCenter.default.post(name: Notification.Name("NASReadingError"), object: NASConnection.message(for: error))
+                return []
+            }
+        }
+        let isDownloaded = !originalOnly && DownloadManager.shared.isChapterDownloaded(chapter: identifier)
         if isDownloaded {
             return await DownloadManager.shared.getDownloadedPages(for: identifier)
                 .map {

@@ -9,6 +9,7 @@ import AidokuRunner
 import SwiftUI
 
 struct SearchContentView: View {
+    @ObservedObject private var privacy = PrivacyDisplayStore.shared
     @StateObject private var viewModel: ViewModel
     @Binding private var searchText: String
     @Binding var searchCommitToggle: Bool
@@ -40,7 +41,7 @@ struct SearchContentView: View {
 
     var body: some View {
         Group {
-            if searchText.isEmpty && viewModel.history.isEmpty {
+            if searchText.isEmpty && (viewModel.history.isEmpty || privacy.policy.hidesExplicit) {
                 UnavailableView(
                     NSLocalizedString("NO_RECENT_SEARCHES"),
                     systemImage: "magnifyingglass",
@@ -60,7 +61,7 @@ struct SearchContentView: View {
             } else {
                 List {
                     if searchText.isEmpty {
-                        if !viewModel.history.isEmpty {
+                        if !viewModel.history.isEmpty && !privacy.policy.hidesExplicit {
                             historyItems
                         }
                     } else {
@@ -153,7 +154,7 @@ struct SearchContentView: View {
                 }
                 return hasher.finalize()
             }()
-            if !result.entries.isEmpty {
+            if privacy.allows(source), result.entries.contains(where: { privacy.allows($0) }) {
                 Section {
                     HomeScrollerView(
                         source: source,

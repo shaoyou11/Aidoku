@@ -9,6 +9,7 @@ import AidokuRunner
 import SwiftUI
 
 struct HomeChapterListView: View {
+    @ObservedObject private var privacy = PrivacyDisplayStore.shared
     let source: AidokuRunner.Source
     let component: HomeComponent
     let partial: Bool
@@ -16,7 +17,7 @@ struct HomeChapterListView: View {
     @EnvironmentObject private var path: NavigationCoordinator
 
     private let pageSize: Int?
-    private let entries: [MangaWithChapter]
+    private let rawEntries: [MangaWithChapter]
     private let listing: AidokuRunner.Listing?
 
     @State private var bookmarkedItems: Set<String> = .init()
@@ -35,8 +36,13 @@ struct HomeChapterListView: View {
             fatalError("invalid component type")
         }
         self.pageSize = pageSize
-        self.entries = entries
+        self.rawEntries = entries
         self.listing = listing
+    }
+
+    private var entries: [MangaWithChapter] {
+        guard privacy.allows(source) else { return [] }
+        return rawEntries.filter { privacy.allows($0.manga) }
     }
 
     var body: some View {

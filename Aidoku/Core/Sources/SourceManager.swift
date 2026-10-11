@@ -584,6 +584,7 @@ extension SourceManager {
     enum CustomSourceKind {
         case demo
         case local
+        case nas
         case komga(ServerConfig)
         case kavita(ServerConfig)
         case suwayomi(ServerConfig)
@@ -602,6 +603,8 @@ extension SourceManager {
         switch kind {
             case .local:
                 config = CustomSourceConfig.local
+            case .nas:
+                config = CustomSourceConfig.nas
             case .demo:
                 config = CustomSourceConfig.demo
             case .komga(let serverConfig), .kavita(let serverConfig), .suwayomi(let serverConfig):
@@ -614,7 +617,7 @@ extension SourceManager {
                     case .komga: KomgaSourceRunner.sourceKeyPrefix
                     case .kavita: KavitaSourceRunner.sourceKeyPrefix
                     case .suwayomi: SuwayomiSourceRunner.sourceKeyPrefix
-                    case .local, .demo: unreachable()
+                    case .local, .demo, .nas: unreachable()
                 }
                 let nameEncoded = name.lowercased().replacingOccurrences(of: " ", with: "-")
                 var key = "\(keyPrefix).\(nameEncoded)"
@@ -631,7 +634,7 @@ extension SourceManager {
                     case .komga: CustomSourceConfig.komga(configValues)
                     case .kavita: CustomSourceConfig.kavita(configValues)
                     case .suwayomi: CustomSourceConfig.suwayomi(configValues)
-                    case .local, .demo: unreachable()
+                    case .local, .demo, .nas: unreachable()
                 }
 
                 // register details

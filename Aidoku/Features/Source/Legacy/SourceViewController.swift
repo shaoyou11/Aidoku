@@ -121,6 +121,10 @@ class SourceViewController: OldMangaCollectionViewController {
     }
 
     override func observe() {
+        super.observe()
+        addObserver(forName: .privacyDisplayChanged) { [weak self] _ in
+            Task { @MainActor in await self?.updateDataSource() }
+        }
         // refresh when languages change
         addObserver(forName: "\(source.id).languages") { [weak self] _ in
             guard let self = self else { return }
@@ -301,7 +305,7 @@ extension SourceViewController {
         forItemAt indexPath: IndexPath
     ) {
         Task {
-            let mangaCount = await viewModel.manga.count
+            let mangaCount = dataSource.snapshot().numberOfItems
             let hasMore = await viewModel.hasMore
             if indexPath.row == mangaCount - 1 && hasMore {
                 await viewModel.loadNextMangaPage()
@@ -426,14 +430,17 @@ extension SourceViewController {
         await viewModel.setManga(manga)
 
         snapshot.appendSections([.regular])
-        snapshot.appendItems(manga)
+        let ratings = await viewModel.contentRatings
+        let privacy = PrivacyDisplayStore.shared.policy
+        let sourceHidden = privacy.hidesExplicit && source.manifest.info.nsfw == 2
+        snapshot.appendItems(sourceHidden ? [] : manga.filter { privacy.allows($0.id, rating: ratings[$0.id] ?? -1) })
 
         await dataSource.apply(snapshot)
     }
 
     func refreshCells(for mangaInfo: [MangaInfo]) {
         var snapshot = dataSource.snapshot()
-        snapshot.reconfigureItems(mangaInfo)
+        snapshot.reconfigureItems(mangaInfo.filter { snapshot.indexOfItem($0) != nil })
         dataSource.apply(snapshot)
     }
 }

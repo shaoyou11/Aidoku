@@ -9,6 +9,7 @@ import AidokuRunner
 import SwiftUI
 
 struct MangaUpdatesView: View {
+    @ObservedObject private var privacy = PrivacyDisplayStore.shared
     struct UpdateSection: Hashable {
         let day: Int
         var items: [Item]
@@ -93,7 +94,7 @@ struct MangaUpdatesView: View {
                 let items = entry.items
                 ForEach(items, id: \.mangaId) { item in
                     let updates = item.updates
-                    if let update = updates.first {
+                    if let update = updates.first, privacy.allows(update.manga) {
                         NavigationLink(
                             destination: MangaView(manga: update.manga, path: path)
                                 .onAppear {

@@ -27,6 +27,11 @@ extension SettingsView {
     var body: some View {
         List {
             if searchText.isEmpty {
+                Section {
+                    NavigationLink { PrivacyDisplayView() } label: {
+                        Label("隐私显示", systemImage: "eye.slash")
+                    }
+                }
                 ForEach(Self.settings.indices, id: \.self) { offset in
                     let setting = Self.settings[offset]
                     SettingView(setting: setting, onChange: onSettingChange)

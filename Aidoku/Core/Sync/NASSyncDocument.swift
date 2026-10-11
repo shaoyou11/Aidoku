@@ -137,7 +137,7 @@ enum NASSyncError: LocalizedError {
         switch self {
         case .invalidFolderName: "文件夹名称不能为空，也不能包含斜杠或使用相对路径。"
         case .folderExists: "文件夹已存在，请从列表中选择，或使用其他名称。"
-        case .invalidAddress: "请输入 HTTPS WebDAV 地址，或使用局域网 IPv4 地址的 HTTP WebDAV。地址中不要包含账号或密码。"
+        case .invalidAddress: "请输入有效 WebDAV 地址。推荐 HTTPS；IPv6 字面地址需用方括号包围，HTTP IPv6 需开启直连选项。地址中不要包含账号或密码。"
         case .invalidDocument: "同步文件无法识别或内容异常，未覆盖数据。请检查 NAS 上的同步文件和设备时间。"
         case .authentication: "认证失败或没有访问权限，请检查账号、密码和文件夹权限。"
         case .missingFolder: "同步文件夹不存在，请先在 NAS 中创建该文件夹。"
