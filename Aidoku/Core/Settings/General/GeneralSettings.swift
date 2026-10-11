@@ -16,5 +16,8 @@ struct GeneralSettings: Sendable {
     }
 
     let incognitoMode = SettingsKey<Bool>("General.incognitoMode", default: false)
-    let icloudSync = SettingsKey<Bool>("General.icloudSync", default: false)
+    let icloudSync = SettingsKey<Bool>("General.icloudSync", default: false, requires: {
+        // Imported backups must not re-enable unavailable CloudKit or block NAS sync.
+        Bundle.main.object(forInfoDictionaryKey: "AidokuTCloudSyncDisabled") as? Bool == true ? false : nil
+    })
 }
