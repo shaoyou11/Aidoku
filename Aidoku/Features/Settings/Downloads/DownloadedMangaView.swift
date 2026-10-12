@@ -14,8 +14,11 @@ struct DownloadedMangaView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var path: NavigationCoordinator
 
-    @State private var showNASUpload = false
-    @State private var nasChapters: [DownloadedChapterInfo] = []
+    private struct UploadSelection: Identifiable {
+        let id = UUID()
+        let chapters: [DownloadedChapterInfo]
+    }
+    @State private var nasUpload: UploadSelection?
     @State private var openChapter: DownloadedChapterInfo?
 
     @Namespace private var transitionNamespace
@@ -49,7 +52,7 @@ struct DownloadedMangaView: View {
         .navigationTitle(contentHidden ? "下载详情" : viewModel.manga.displayTitle)
         .onChange(of: contentHidden) { hidden in
             if hidden {
-                showNASUpload = false
+                nasUpload = nil
                 openChapter = nil
             }
         }
@@ -76,8 +79,7 @@ struct DownloadedMangaView: View {
 
                     if viewModel.chapters.contains(where: { !$0.failed }) {
                         Button {
-                            nasChapters = viewModel.chapters.filter { !$0.failed }
-                            showNASUpload = true
+                            nasUpload = UploadSelection(chapters: viewModel.chapters.filter { !$0.failed })
                         } label: { Label("上传已下载章节到 NAS", systemImage: "externaldrive.badge.plus") }
                     }
                     if !viewModel.chapters.isEmpty {
@@ -93,7 +95,9 @@ struct DownloadedMangaView: View {
                 .disabled(contentHidden)
             }
         }
-        .sheet(isPresented: $showNASUpload) { NASComicUploadView(manga: viewModel.manga, chapters: nasChapters) }
+        .sheet(item: $nasUpload, onDismiss: { Task { await viewModel.loadChapters() } }) { selection in
+            NASComicUploadView(manga: viewModel.manga, chapters: selection.chapters)
+        }
         .task {
             await viewModel.loadChapters()
             await viewModel.loadHistory()
@@ -149,8 +153,7 @@ struct DownloadedMangaView: View {
                                 Label(NSLocalizedString("SHARE"), systemImage: "square.and.arrow.up")
                             }
                             Button {
-                                nasChapters = [chapter]
-                                showNASUpload = true
+                                nasUpload = UploadSelection(chapters: [chapter])
                             } label: { Label("上传本章到 NAS", systemImage: "externaldrive.badge.plus") }
                         }
                     }

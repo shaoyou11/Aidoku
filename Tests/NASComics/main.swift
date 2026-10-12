@@ -1,8 +1,40 @@
 import Foundation
 
+final class DeleteServer: URLProtocol {
+    static var methods: [String] = []
+    static var etag = "\"current\""
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func stopLoading() { }
+    override func startLoading() {
+        Self.methods.append(request.httpMethod ?? "")
+        let deleting = request.httpMethod == "DELETE"
+        if deleting { precondition(request.value(forHTTPHeaderField: "If-Match") == Self.etag) }
+        let response = HTTPURLResponse(url: request.url!, statusCode: deleting ? 204 : 200, httpVersion: "HTTP/1.1",
+                                       headerFields: ["Content-Length": "123", "ETag": Self.etag])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+}
+
 @main struct Tests {
     static func expect(_ condition: Bool, _ text: String) { if !condition { fatalError(text) } }
     static func main() async throws {
+        let deleteConfig = URLSessionConfiguration.ephemeral
+        deleteConfig.protocolClasses = [DeleteServer.self]
+        let deleteConnection = NASConnection(folder: "https://nas.invalid/comics/")
+        let deleteClient = try NASComicClient(connection: deleteConnection, root: deleteConnection.folderURL(), configuration: deleteConfig)
+        defer { deleteClient.close() }
+        let archiveEntry = NASComicEntry(name: "chapter.cbz", path: "book/chapter.cbz", isDirectory: false, size: 123, etag: "\"current\"")
+        try await deleteClient.deleteArchive(archiveEntry)
+        expect(DeleteServer.methods == ["HEAD", "DELETE"], "delete exactly one archive with an ETag condition")
+        DeleteServer.methods = []; DeleteServer.etag = "\"changed\""
+        do { try await deleteClient.deleteArchive(archiveEntry); fatalError("changed NAS file deleted") } catch NASComicError.localChanged { }
+        expect(DeleteServer.methods == ["HEAD"], "changed files must remain untouched")
+        DeleteServer.methods = []
+        do { try await deleteClient.deleteArchive(.init(name: "book", path: "book", isDirectory: true, size: 0, etag: nil)); fatalError("folder deletion accepted") } catch NASComicError.invalidArchive { }
+        expect(DeleteServer.methods.isEmpty, "never send a folder deletion request")
+        print("PASS: single-file NAS deletion, version guard and folder deletion rejection")
         let connection = NASConnection(folder: "https://[2001:db8::1]/dav/漫画/", username: "test", password: "test", fallbackFolder: "https://fallback.invalid/dav/漫画/")
         let root = try connection.folderURL()
         expect(NASConnection.isIPv6(root.host!), "IPv6 bracket parsing")

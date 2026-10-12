@@ -483,7 +483,7 @@ extension DownloadManager {
             let chapterId = if failed {
                 String(chapterDirectory.lastPathComponent.dropFirst(DownloadCache.tmpDirectoryPrefix.count))
             } else {
-                chapterDirectory.deletingPathExtension().lastPathComponent
+                chapterDirectory.isDirectory ? chapterDirectory.lastPathComponent : chapterDirectory.deletingPathExtension().lastPathComponent
             }
             let size = await calculateDirectorySize(chapterDirectory)
 
@@ -722,6 +722,25 @@ extension DownloadManager {
 }
 
 extension DownloadManager {
+    /// Called only after the remote archive, first page and chapter association have been verified.
+    func removeVerifiedNASDownload(_ chapter: ChapterIdentifier, verifiedArchive: URL) async throws {
+        guard !cache.tmpDirectory(for: chapter).exists else { throw NASComicError.localChanged }
+        let directory = cache.directory(for: chapter)
+        let files = try NASComicVerification.localFiles(directory: directory, archive: verifiedArchive)
+        // Remove explicit files one at a time. Preserve manga metadata, cover and unrelated chapters.
+        for file in files { try FileManager.default.removeItem(at: file) }
+        if directory.exists {
+            // Only empty directories are removed; never recursively remove a chapter or manga folder.
+            let children = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: [.isDirectoryKey])?
+                .allObjects.compactMap { $0 as? URL }.filter { $0.isDirectory } ?? []
+            for child in children.sorted(by: { $0.path.count > $1.path.count }) { _ = rmdir(child.path) }
+            guard rmdir(directory.path) == 0 else { throw NASComicError.localChanged }
+        }
+        await cache.remove(chapter: chapter)
+        NotificationCenter.default.post(name: .downloadRemoved, object: chapter)
+        invalidateDownloadedMangaCache()
+    }
+
     /// Make a private, unique copy for a NAS transfer without moving or deleting the local download.
     func makeNASArchive(for chapter: ChapterIdentifier) throws -> URL {
         let source = cache.directory(for: chapter)

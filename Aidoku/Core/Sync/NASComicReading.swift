@@ -9,6 +9,7 @@ struct NASComicLink: Codable {
     let path: String
     let size: Int64
     var explicit: Bool? = nil
+    var deleted: Bool? = nil
 }
 
 extension NASComicManager {
@@ -19,7 +20,7 @@ extension NASComicManager {
         ".aidokut-links/" + NASComicPaths.hash(source + "\n" + manga + "\n" + chapter) + ".json"
     }
     func linkedPages(manga: AidokuRunner.Manga, chapter: AidokuRunner.Chapter) async throws -> [AidokuRunner.Page]? {
-        guard manga.sourceKey != NASSourceRunner.sourceKey, manga.sourceKey != LocalSourceRunner.sourceKey,
+        guard manga.sourceKey != NASSourceRunner.sourceKey,
               UserDefaults.standard.string(forKey: Self.sourcePreferenceKey(manga.identifier)) != "original",
               let config = try? configuration() else { return nil }
         let path = Self.linkPath(source: manga.sourceKey, manga: manga.key, chapter: chapter.key)
@@ -27,11 +28,21 @@ extension NASComicManager {
         // No known uploaded chapter means no NAS request at all, including sibling chapters.
         guard let data = UserDefaults.standard.data(forKey: cacheKey),
               let link = try? JSONDecoder().decode(NASComicLink.self, from: data),
-              link.source == manga.sourceKey, link.manga == manga.key, link.chapter == chapter.key else { return nil }
+              link.deleted != true, link.source == manga.sourceKey, link.manga == manga.key, link.chapter == chapter.key else { return nil }
         _ = try NASComicPaths.url(link.path, root: config.root)
-        let entries = try await entries((link.path as NSString).deletingLastPathComponent, refresh: false)
-        guard let entry = entries.first(where: { $0.path == link.path && !$0.isDirectory }) else { return nil }
-        return try await onlinePages(entry)
+        if let saved = try? await entries((link.path as NSString).deletingLastPathComponent, refresh: false),
+           let entry = saved.first(where: { $0.path == link.path && !$0.isDirectory }), isCached(entry) {
+            return try await onlinePages(entry)
+        }
+        // Resolve the linked file directly; a stale directory cache must not make it disappear.
+        let client = try NASComicClient(connection: config.connection, root: config.root)
+        defer { client.close() }
+        do {
+            return try await onlinePages(try await client.stat(link.path))
+        } catch NASSyncError.missingFolder {
+            UserDefaults.standard.removeObject(forKey: cacheKey)
+            return nil
+        }
     }
     func isComicVisible(path: String, isDirectory: Bool) -> Bool {
         guard let config = try? configuration() else { return true }
@@ -67,18 +78,19 @@ extension NASComicManager {
                   Self.linkPath(source: link.source, manga: link.manga, chapter: link.chapter) == entry.path,
                   (try? NASComicPaths.url(link.path, root: config.root)) != nil else { continue }
             UserDefaults.standard.set(data, forKey: "NASComics.link." + NASComicPaths.hash(config.fingerprint + entry.path))
-            count += 1
+            if link.deleted != true { count += 1 }
         }
         return count
     }
-    func onlinePages(_ entry: NASComicEntry) async throws -> [AidokuRunner.Page] {
-        if isCached(entry) {
+    func onlinePages(_ entry: NASComicEntry, allowCache: Bool = true) async throws -> [AidokuRunner.Page] {
+        if allowCache && isCached(entry) {
             let archive = try await cachedArchive(entry)
             return LocalFileManager.shared.readPages(from: archive)
         }
         let config = try configuration()
         let client = try NASComicClient(connection: config.connection, root: config.root)
         defer { client.close() }
+        let entry = try await client.stat(entry.path)
         guard entry.size > 22 else { throw NASComicError.requiresWholeArchive }
         let count = min(entry.size, 65557)
         let tail = try await client.range(entry, start: entry.size - count, count: count)

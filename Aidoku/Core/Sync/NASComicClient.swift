@@ -120,6 +120,31 @@ final class NASComicClient: NSObject, URLSessionDownloadDelegate, @unchecked Sen
         try check(verified, allowed: [200])
         guard verified.expectedContentLength == size else { throw NASComicError.invalidArchive }
     }
+    func stat(_ path: String) async throws -> NASComicEntry {
+        let (_, response) = try await router.send(request("HEAD", path: path)) { try await self.session.data(for: $0) }
+        try check(response, allowed: [200])
+        guard let http = response as? HTTPURLResponse, response.expectedContentLength > 0,
+              response.expectedContentLength <= Self.maxFileBytes else { throw NASComicError.invalidArchive }
+        return .init(name: (path as NSString).lastPathComponent, path: path, isDirectory: false,
+                     size: response.expectedContentLength, etag: http.value(forHTTPHeaderField: "ETag"))
+    }
+
+    /// Delete one explicitly selected archive, never a folder or a wildcard path.
+    func deleteArchive(_ entry: NASComicEntry) async throws {
+        guard !entry.isDirectory, ["cbz", "zip"].contains((entry.path as NSString).pathExtension.lowercased()) else {
+            throw NASComicError.invalidArchive
+        }
+        let current = try await stat(entry.path)
+        guard current.size == entry.size, current.etag == entry.etag else { throw NASComicError.localChanged }
+        var request = try request("DELETE", path: entry.path)
+        guard let etag = current.etag, etag.hasPrefix("\""), etag.hasSuffix("\""), !etag.contains("\n") else {
+            throw NASComicError.verificationFailed
+        }
+        request.setValue(etag, forHTTPHeaderField: "If-Match")
+        let (_, response) = try await router.send(request) { try await self.session.data(for: $0) }
+        try check(response, allowed: [200, 204])
+    }
+
     func readLink(_ path: String) async throws -> Data? {
         try await router.send(request("GET", path: path)) { request in
             let (bytes, response) = try await self.session.bytes(for: request)

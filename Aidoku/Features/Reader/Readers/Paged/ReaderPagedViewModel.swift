@@ -62,9 +62,15 @@ class ReaderPagedViewModel {
         )
         let language = chapter.language ?? source?.languages.first
         let originalOnly = UserDefaults.standard.string(forKey: NASComicManager.sourcePreferenceKey(manga.identifier)) == "original"
-        if !originalOnly && manga.sourceKey != NASSourceRunner.sourceKey {
+        if manga.sourceKey == NASSourceRunner.sourceKey || !originalOnly {
             do {
-                if let nasPages = try await NASComicManager.shared.linkedPages(manga: manga, chapter: chapter) {
+                // The built-in NAS reader must work even before the source store finishes loading.
+                let nasPages: [AidokuRunner.Page]? = if manga.sourceKey == NASSourceRunner.sourceKey {
+                    try await NASComicManager.shared.pages(chapter: chapter)
+                } else {
+                    try await NASComicManager.shared.linkedPages(manga: manga, chapter: chapter)
+                }
+                if let nasPages {
                     return nasPages.map { $0.toOld(sourceId: sourceId, chapterId: chapter.key, language: language) }
                 }
             } catch {

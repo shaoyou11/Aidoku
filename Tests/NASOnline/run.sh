@@ -11,6 +11,6 @@ xcrun swiftc -parse-as-library -I "$NAS_ONLINE_TEST_DIR" -L "$NAS_ONLINE_TEST_DI
   Aidoku/Core/Sync/NASSyncDocument.swift Aidoku/Core/Sync/NASWebDAVClient.swift \
   Aidoku/Core/Sync/NASFolderListing.swift Aidoku/Core/Sync/NASComicDirectory.swift \
   Aidoku/Core/Sync/NASRequestRouter.swift Aidoku/Core/Sync/NASComicClient.swift \
-  Aidoku/Core/Sync/NASZIPIndex.swift "$NAS_ONLINE_TEST_DIR/Decode.swift" Tests/NASOnline/main.swift \
+  Aidoku/Core/Sync/NASZIPIndex.swift Aidoku/Core/Sync/NASComicVerification.swift "$NAS_ONLINE_TEST_DIR/Decode.swift" Tests/NASOnline/main.swift \
   -o "$NAS_ONLINE_TEST_DIR/online"
 "$NAS_ONLINE_TEST_DIR/online" "$NAS_ONLINE_TEST_DIR"

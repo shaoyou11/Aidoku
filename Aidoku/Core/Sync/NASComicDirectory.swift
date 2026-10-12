@@ -21,15 +21,18 @@ struct NASComicUploadSummary: Codable, Sendable {
     var uploaded = 0
     var skipped = 0
     var linked = 0
+    var removedLocal: Int? = nil
     var state = State.uploading
     var error: String?
     var updatedAt = Date()
 }
 
 enum NASComicError: LocalizedError {
-    case invalidArchive, tooLarge, cacheFull, wrongConnection, exists, busy, requiresWholeArchive
+    case verificationFailed, localChanged, invalidArchive, tooLarge, cacheFull, wrongConnection, exists, busy, requiresWholeArchive
     var errorDescription: String? {
         switch self {
+        case .verificationFailed: "NAS 文件或阅读关联校验未通过，手机原下载已保留。"
+        case .localChanged: "手机章节在上传期间发生变化，原下载已保留，请重新上传。"
         case .requiresWholeArchive: "此 NAS 或压缩格式暂不支持按页在线读取。可选择“缓存整章”后阅读，不会自动下载整章。"
         case .invalidArchive: "不是可阅读的 CBZ / ZIP 漫画，或文件损坏。"
         case .tooLarge: "单章文件超过 1 GB，请拆分后再试。"

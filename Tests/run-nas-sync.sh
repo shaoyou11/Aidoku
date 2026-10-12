@@ -42,3 +42,5 @@ fi
 
 xcrun swiftc Aidoku/Core/Library/Models/MangaIdentifier.swift Aidoku/Core/Privacy/PrivacyDisplayPolicy.swift Tests/Privacy/main.swift -o "$NAS_TEST_DIR/privacy"
 "$NAS_TEST_DIR/privacy"
+
+bash Tests/NASReader/run.sh

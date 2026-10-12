@@ -117,13 +117,14 @@ final class NASComicManager: ObservableObject {
             await SourceManager.shared.createCustomSource(.nas)
         }
     }
-    func upload(manga: DownloadedMangaInfo, chapters: [DownloadedChapterInfo]) {
-        guard !busy else { return }
+    func upload(manga: DownloadedMangaInfo, chapters: [DownloadedChapterInfo], removeLocal: Bool = true) {
+        guard !busy, chapters.contains(where: { !$0.failed }) else { return }
         busy = true; progress = nil; status = "正在准备上传…"
         lastUpload = nil
         transfer = Task {
             defer { busy = false; progress = nil; activeClient = nil; transfer = nil }
             do {
+                await enableSource()
                 let config = try configuration()
                 let completed = chapters.filter { !$0.failed }
                 let folder = NASComicPaths.filename(manga.displayTitle, identity: manga.id)
@@ -147,6 +148,7 @@ final class NASComicManager: ObservableObject {
                     // A unique export name avoids clashing with the share sheet's temporary archive.
                     let file = try await DownloadManager.shared.makeNASArchive(for: identifier)
                     defer { try? FileManager.default.removeItem(at: file) }
+                    try Self.validateArchive(file)
                     let name = NASComicPaths.filename(chapter.displayTitle, identity: chapter.chapterId) + ".cbz"
                     do {
                         try await client.upload(file, path: folder + "/" + name)
@@ -164,12 +166,31 @@ final class NASComicManager: ObservableObject {
                         updateUpload { $0.state = .failed; $0.error = NASConnection.message(for: error) }
                         return
                     }
+                    // Read the NAS copy back before associating it or deleting the phone copy.
+                    status = "正在校验 NAS 章节 \(index + 1)/\(completed.count)…"
+                    let remoteEntry = try await client.stat(folder + "/" + name)
+                    let verified = FileManager.default.temporaryDirectory.appendingPathComponent("nas-verify-" + UUID().uuidString + ".cbz")
+                    defer { try? FileManager.default.removeItem(at: verified) }
+                    try await client.download(remoteEntry, to: verified)
+                    let identical = try await Task.detached {
+                        try Self.validateArchive(verified)
+                        return try NASComicVerification.sameChapter(file, verified)
+                    }.value
+                    guard identical else { throw NASComicError.verificationFailed }
+                    // Verify the actual online reader can fetch and decode a page without any local download.
+                    let pages = try await onlinePages(remoteEntry, allowCache: false)
+                    guard let first = pages.first else { throw NASComicError.invalidArchive }
+                    if case let .url(_, context) = first.content {
+                        guard UIImage(data: try await onlineImageData(context: context)) != nil else { throw NASComicError.invalidArchive }
+                    }
+                    let logicalChapter = chapter.toChapter().key
                     let size = Int64((try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
-                    let link = NASComicLink(source: manga.sourceId, manga: manga.mangaId, chapter: chapter.chapterId, path: folder + "/" + name, size: size, explicit: !PrivacyDisplayPolicy(enabled: true, marked: PrivacyDisplayStore.shared.policy.marked, knownExplicit: PrivacyDisplayStore.shared.policy.knownExplicit, explicitSources: PrivacyDisplayStore.shared.policy.explicitSources).allows(.init(sourceKey: manga.sourceId, mangaKey: manga.mangaId)))
-                    let linkPath = Self.linkPath(source: manga.sourceId, manga: manga.mangaId, chapter: chapter.chapterId)
+                    let link = NASComicLink(source: manga.sourceId, manga: manga.mangaId, chapter: logicalChapter, path: folder + "/" + name, size: size, explicit: !PrivacyDisplayPolicy(enabled: true, marked: PrivacyDisplayStore.shared.policy.marked, knownExplicit: PrivacyDisplayStore.shared.policy.knownExplicit, explicitSources: PrivacyDisplayStore.shared.policy.explicitSources).allows(.init(sourceKey: manga.sourceId, mangaKey: manga.mangaId)))
+                    let linkPath = Self.linkPath(source: manga.sourceId, manga: manga.mangaId, chapter: logicalChapter)
                     let linkData = try JSONEncoder().encode(link)
                     do {
                         try await client.writeLink(linkData, path: linkPath)
+                        guard try await client.readLink(linkPath) == linkData else { throw NASComicError.verificationFailed }
                     } catch {
                         if Task.isCancelled || (error as? URLError)?.code == .cancelled { throw CancellationError() }
                         status = "章节文件已在 NAS，但阅读关联未保存；重试上传可补齐关联。"
@@ -178,8 +199,14 @@ final class NASComicManager: ObservableObject {
                     }
                     UserDefaults.standard.set(linkData, forKey: "NASComics.link." + NASComicPaths.hash(config.fingerprint + linkPath))
                     updateUpload { $0.linked += 1 }
+                    if removeLocal {
+                        status = "正在清理已校验章节的手机下载…"
+                        try Task.checkCancellation()
+                        try await DownloadManager.shared.removeVerifiedNASDownload(identifier, verifiedArchive: verified)
+                        updateUpload { $0.removedLocal = ($0.removedLocal ?? 0) + 1 }
+                    }
                 }
-                status = "上传完成：\(uploaded) 章，同名跳过 \(skipped) 章，失败 \(failed) 章 · " + client.routeLabel
+                status = "上传并校验完成：\(uploaded) 章，同名跳过 \(skipped) 章，失败 \(failed) 章 · " + client.routeLabel
                 updateUpload { $0.state = .completed }
                 _ = try? await entries(folder)
                 _ = try? await entries("")
@@ -192,6 +219,34 @@ final class NASComicManager: ObservableObject {
             }
         }
     }
+    func deleteChapter(_ entry: NASComicEntry) async throws {
+        guard !busy, !entry.isDirectory else { throw NASComicError.busy }
+        let config = try configuration()
+        let client = try client(config)
+        busy = true; status = "正在删除所选 NAS 章节…"
+        defer { busy = false; client.close() }
+        // Refresh associations so deletion also invalidates links created on another device.
+        do { _ = try await refreshUploadedLinks() } catch NASSyncError.missingFolder { }
+        try await client.deleteArchive(entry)
+        var linkFailure = false
+        for (key, value) in UserDefaults.standard.dictionaryRepresentation() where key.hasPrefix("NASComics.link.") {
+            guard let data = value as? Data, var link = try? JSONDecoder().decode(NASComicLink.self, from: data),
+                  link.path == entry.path else { continue }
+            let path = Self.linkPath(source: link.source, manga: link.manga, chapter: link.chapter)
+            guard key == "NASComics.link." + NASComicPaths.hash(config.fingerprint + path) else { continue }
+            link.deleted = true
+            let tombstone = try JSONEncoder().encode(link)
+            UserDefaults.standard.set(tombstone, forKey: key)
+            do { try await client.writeLink(tombstone, path: path) } catch { linkFailure = true }
+        }
+        let folder = (entry.path as NSString).deletingLastPathComponent
+        let listing = try listingURL(folder, config: config)
+        if let data = try? Data(contentsOf: listing), let old = try? JSONDecoder().decode([NASComicEntry].self, from: data) {
+            try JSONEncoder().encode(old.filter { $0.path != entry.path }).write(to: listing, options: .atomic)
+        }
+        status = linkFailure ? "NAS 章节已删除；部分关联未更新，其他设备再次打开时会自动检查。" : "已删除所选 NAS 章节"
+    }
+
     private func cacheURL(_ entry: NASComicEntry, config: Configuration) throws -> URL {
         // Include ETag/size so a changed server file cannot silently reuse old cached pages.
         let identity = config.fingerprint + ":" + entry.path + ":" + (entry.etag ?? "") + ":" + String(entry.size)
@@ -290,7 +345,12 @@ final class NASComicManager: ObservableObject {
         let path = try path(for: chapter.key)
         let folder = (path as NSString).deletingLastPathComponent
         let entries = try await entries(folder, refresh: false)
-        guard let entry = entries.first(where: { $0.path == path && !$0.isDirectory }) else { throw NASSyncError.missingFolder }
-        return try await onlinePages(entry)
+        if let entry = entries.first(where: { $0.path == path && !$0.isDirectory }), isCached(entry) {
+            return try await onlinePages(entry)
+        }
+        let config = try configuration()
+        let client = try client(config)
+        defer { client.close() }
+        return try await onlinePages(try await client.stat(path))
     }
 }

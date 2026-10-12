@@ -15,6 +15,7 @@ struct NASComicLibraryView: View {
     @State private var showFolders = false
     @State private var pickerConnection: NASConnection?
     @State private var cacheConfirmation: NASComicEntry?
+    @State private var deleteConfirmation: NASComicEntry?
     @State private var reader: ReadingItem?
     @State private var loadID = UUID()
     private struct ReadingItem: Identifiable {
@@ -71,7 +72,7 @@ struct NASComicLibraryView: View {
                 Text("阅读缓存 " + ByteCountFormatter.string(fromByteCount: manager.cacheBytes, countStyle: .file) + " / 2 GB")
                     .font(.footnote).foregroundStyle(.secondary)
             } footer: {
-                Text("点开即按页在线读取，不预先下载整章。长按章节可选“缓存整章”用于离线阅读；左滑可移除手机缓存，不删除 NAS 原文件。上传时保持 App 在前台。")
+                Text("点开即按页在线读取，不预先下载整章。长按章节可选“缓存整章”用于离线阅读；左滑可选择移除手机缓存或删除所选 NAS 章节。上传时保持 App 在前台。")
             }
             NASConnectionStatusSection()
             if let notice {
@@ -109,8 +110,10 @@ struct NASComicLibraryView: View {
                         .disabled(interacting)
                         .contextMenu {
                             Button("缓存整章，供离线阅读") { Task { await cache(entry) } }.disabled(interacting)
+                            Button("删除 NAS 章节", role: .destructive) { deleteConfirmation = entry }.disabled(interacting)
                         }
-                        .swipeActions {
+                        .swipeActions(allowsFullSwipe: false) {
+                            Button("删除 NAS 章节", role: .destructive) { deleteConfirmation = entry }.disabled(interacting)
                             if manager.isCached(entry) {
                                 Button("移除缓存", role: .destructive) {
                                     do { try manager.removeCache(entry) } catch { message = NASConnection.message(for: error) }
@@ -143,6 +146,20 @@ struct NASComicLibraryView: View {
             }
             Button("取消", role: .cancel) { cacheConfirmation = nil }
         } message: { Text("此 NAS 不支持 Range 分段读取，或压缩格式不支持在线解码。只有确认后才下载整章。") }
+        .alert("删除 NAS 章节？", isPresented: Binding(get: { deleteConfirmation != nil }, set: { if !$0 { deleteConfirmation = nil } })) {
+            Button("删除此章", role: .destructive) {
+                if let entry = deleteConfirmation {
+                    Task {
+                        do { try await manager.deleteChapter(entry); await load() }
+                        catch { message = NASConnection.message(for: error) }
+                    }
+                }
+                deleteConfirmation = nil
+            }
+            Button("取消", role: .cancel) { deleteConfirmation = nil }
+        } message: {
+            Text("仅删除 NAS 上的“\(deleteConfirmation?.name ?? "")”。若手机原下载也已删除，需要从原图源重新下载才能恢复。")
+        }
         .fullScreenCover(item: $reader) { item in
             SwiftUIReaderNavigationController(source: SourceManager.shared.store.source(for: NASSourceRunner.sourceKey), manga: item.manga, chapter: item.chapter)
                 .ignoresSafeArea()
@@ -185,6 +202,7 @@ struct NASComicUploadView: View {
     let chapters: [DownloadedChapterInfo]
     @ObservedObject private var manager = NASComicManager.shared
     @Environment(\.dismiss) private var dismiss
+    @State private var removeLocal = true
 
     private var uploadSummary: NASComicUploadSummary? {
         guard let summary = manager.lastUpload,
@@ -212,14 +230,15 @@ struct NASComicUploadView: View {
                     Text("本次上传 \(chapters.filter { !$0.failed }.count) 个完整章节")
                     Text((try? manager.configuration().root.path) ?? "请先在 NAS 同步中配置并保存连接")
                         .font(.footnote).foregroundStyle(.secondary)
-                } footer: { Text("以 CBZ 保存到 NAS，手机原下载保留。同名章节会跳过，断网后可重试。上传一章只保存这一章，不会自动下载其余章节。") }
+                    Toggle("校验成功后删除手机下载", isOn: $removeLocal).disabled(manager.busy)
+                } footer: { Text("迁移为 NAS 上的 CBZ 章节，校验文件、图片及阅读关联后再清理手机原下载。校验失败会保留原下载；关闭开关则仅复制。只处理本次选择的章节。") }
                 Section {
                     Text(manager.status).font(.footnote)
                     if manager.busy {
                         if let progress = manager.progress { ProgressView(value: progress) } else { ProgressView() }
                         Button("取消上传", role: .cancel) { manager.cancel() }
                     } else {
-                        Button { manager.upload(manga: manga, chapters: chapters) } label: {
+                        Button { manager.upload(manga: manga, chapters: chapters, removeLocal: removeLocal) } label: {
                             NASActionLabel(title: "开始上传", systemImage: "arrow.up.doc")
                         }
                         .disabled((try? manager.configuration()) == nil || chapters.allSatisfy(\.failed))
@@ -231,6 +250,7 @@ struct NASComicUploadView: View {
                         HStack { Text("新上传"); Spacer(); Text("\(summary.uploaded) / \(summary.total) 章") }
                         HStack { Text("NAS 已存在，跳过上传"); Spacer(); Text("\(summary.skipped) 章") }
                         HStack { Text("已关联原漫画"); Spacer(); Text("\(summary.linked) 章") }
+                        HStack { Text("已清理手机下载"); Spacer(); Text("\(summary.removedLocal ?? 0) 章") }
                         if let error = summary.error {
                             Label(error, systemImage: "exclamationmark.circle")
                                 .font(.footnote).foregroundStyle(.secondary)
@@ -241,7 +261,7 @@ struct NASComicUploadView: View {
                             }
                         }
                     } header: { Text("上传结果") } footer: {
-                        Text("手机原下载仍保留。已关联的章节可以从原漫画切换为“NAS 优先”；未上传或未关联的章节仍按原方式阅读。")
+                        Text("每个 CBZ 对应一个已下载章节，章内包含多张漫画图片。已关联章节可从原漫画以“NAS 优先”阅读；其余章节仍按原方式读取。")
                     }
                 }
                 Section {

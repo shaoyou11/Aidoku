@@ -82,6 +82,22 @@ final class MidstreamServer: URLProtocol {
     }
     static func main() async throws {
         let fixture = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+        let migrationFolder = fixture.appendingPathComponent("local-chapter")
+        try FileManager.default.createDirectory(at: migrationFolder, withIntermediateDirectories: true)
+        for name in ["2.jpg", "10.png", "ComicInfo.xml"] {
+            let bytes = name == "ComicInfo.xml" ? Data("<ComicInfo/>".utf8) : try Data(contentsOf: fixture.appendingPathComponent(name == "2.jpg" ? "page2.bin" : "page10.bin"))
+            try bytes.write(to: migrationFolder.appendingPathComponent(name))
+        }
+        let verifiedArchive = fixture.appendingPathComponent("chapter.cbz")
+        expect(try NASComicVerification.localFiles(directory: migrationFolder, archive: verifiedArchive).count == 3, "verified migration must include exactly this chapter's files")
+        try Data("changed".utf8).write(to: migrationFolder.appendingPathComponent("2.jpg"))
+        do { _ = try NASComicVerification.localFiles(directory: migrationFolder, archive: verifiedArchive); fatalError("changed local page accepted for deletion") } catch NASComicError.localChanged { }
+        expect(FileManager.default.fileExists(atPath: migrationFolder.appendingPathComponent("10.png").path), "failed verification must preserve all original files")
+        let copiedChapter = fixture.appendingPathComponent("archive-chapter")
+        try FileManager.default.copyItem(at: verifiedArchive, to: copiedChapter.appendingPathExtension("cbz"))
+        expect(try NASComicVerification.localFiles(directory: copiedChapter, archive: verifiedArchive).count == 1, "compressed download migration must select only one archive")
+        expect(try !NASComicVerification.sameChapter(verifiedArchive, fixture.appendingPathComponent("streamed.cbz")), "same-name but different chapter must not qualify for cleanup")
+        print("PASS: migration manifests, changed local download preservation, compressed chapter identity and same-name mismatch")
         let archive = try Data(contentsOf: fixture.appendingPathComponent("chapter.cbz"))
         let tailCount = min(65557, archive.count)
         let tail = archive.subdata(in: archive.count - tailCount ..< archive.count)

@@ -62,11 +62,11 @@ struct ReaderSettingsView: View {
     var body: some View {
         PlatformNavigationStack {
             List {
-                if reader != .text && mangaId.sourceKey != NASSourceRunner.sourceKey && mangaId.sourceKey != LocalSourceRunner.sourceKey {
+                if reader != .text && mangaId.sourceKey != NASSourceRunner.sourceKey {
                     Section {
                         Picker("读取来源", selection: $nasReadingSource) {
                             Text("NAS 优先").tag("nas")
-                            Text("原图源").tag("original")
+                            Text(mangaId.sourceKey == LocalSourceRunner.sourceKey ? "本地导入" : "原图源").tag("original")
                         }
                         .onChange(of: nasReadingSource) { value in
                             let key = NASComicManager.sourcePreferenceKey(mangaId)
