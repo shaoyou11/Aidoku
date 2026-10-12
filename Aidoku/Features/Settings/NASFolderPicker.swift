@@ -9,6 +9,7 @@ struct NASFolderPicker: View {
     @State private var loaded: URL?
     @State private var folders: [NASFolder] = []
     @State private var busy = false
+    @State private var creating = false
     @State private var message: String?
     @State private var requestID = UUID()
     @State private var newName = "Aidoku同步"
@@ -27,12 +28,13 @@ struct NASFolderPicker: View {
                         } label: { Label("上一级", systemImage: "arrow.up") }
                         .disabled(busy)
                     }
-                    if busy { ProgressView("正在读取文件夹…") }
+                    if busy { ProgressView(creating ? "正在创建文件夹…" : "正在读取文件夹…") }
                     if let message {
                         Text(message).foregroundStyle(.secondary)
                         Button("重试") { Task { await load() } }.disabled(busy)
                     }
                 } header: { Text("当前位置") }
+                NASConnectionStatusSection()
                 if loaded != nil {
                     Section {
                         ForEach(folders) { folder in
@@ -54,12 +56,15 @@ struct NASFolderPicker: View {
                     Section {
                         TextField("新文件夹名称", text: $newName)
                             .autocorrectionDisabled()
-                        Button("新建并进入") { Task { await create() } }
+                        Button { Task { await create() } } label: {
+                            NASActionLabel(title: creating ? "正在创建…" : "新建并进入", systemImage: "folder.badge.plus", busy: creating)
+                        }
                             .disabled(busy || newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     } footer: { Text("选择专用文件夹即可，同步文件会自动生成。") }
                     .disabled(busy)
                 }
             }
+            .buttonStyle(NASActionButtonStyle())
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -107,11 +112,12 @@ struct NASFolderPicker: View {
     }
 
     @MainActor private func create() async {
-        guard let loaded else { return }
+        guard let loaded, !busy else { return }
         busy = true
+        creating = true
         message = nil
         let client = NASWebDAVClient(connection: connection)
-        defer { client.close(); busy = false }
+        defer { client.close(); busy = false; creating = false }
         do {
             let created = try await client.createFolder(named: newName, in: loaded)
             self.loaded = nil

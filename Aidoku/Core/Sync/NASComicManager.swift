@@ -10,9 +10,31 @@ final class NASComicManager: ObservableObject {
     @Published private(set) var status = "优先按页在线阅读，整章离线缓存可选"
     @Published private(set) var progress: Double?
     @Published private(set) var cacheBytes: Int64 = 0
+    @Published private(set) var lastUpload: NASComicUploadSummary?
     private var transfer: Task<Void, Never>?
     private var activeClient: NASComicClient?
     private let cacheLimit: Int64 = 2 * 1024 * 1024 * 1024
+
+    private init() {
+        if let data = UserDefaults.standard.data(forKey: "NASComics.lastUpload"),
+           var summary = try? JSONDecoder().decode(NASComicUploadSummary.self, from: data) {
+            if summary.state == .uploading {
+                summary.state = .cancelled
+                summary.error = "上次上传未完成；已完成章节保留，可重新上传剩余章节。"
+            }
+            lastUpload = summary
+        }
+    }
+
+    private func updateUpload(_ update: (inout NASComicUploadSummary) -> Void) {
+        guard var summary = lastUpload else { return }
+        update(&summary)
+        summary.updatedAt = Date()
+        lastUpload = summary
+        if let data = try? JSONEncoder().encode(summary) {
+            UserDefaults.standard.set(data, forKey: "NASComics.lastUpload")
+        }
+    }
 
     struct Configuration {
         let connection: NASConnection
@@ -79,6 +101,9 @@ final class NASComicManager: ObservableObject {
     }
     func createLibrary() async {
         guard !busy else { return }
+        busy = true
+        status = "正在准备漫画目录…"
+        defer { busy = false }
         do {
             let config = try configuration()
             let client = try client(config)
@@ -94,19 +119,23 @@ final class NASComicManager: ObservableObject {
     }
     func upload(manga: DownloadedMangaInfo, chapters: [DownloadedChapterInfo]) {
         guard !busy else { return }
-        busy = true; progress = nil
+        busy = true; progress = nil; status = "正在准备上传…"
+        lastUpload = nil
         transfer = Task {
             defer { busy = false; progress = nil; activeClient = nil; transfer = nil }
             do {
                 let config = try configuration()
+                let completed = chapters.filter { !$0.failed }
+                let folder = NASComicPaths.filename(manga.displayTitle, identity: manga.id)
+                lastUpload = .init(sourceID: manga.sourceId, mangaID: manga.mangaId, title: manga.displayTitle,
+                                   folder: folder, fingerprint: config.fingerprint, total: completed.count)
+                updateUpload { _ in }
                 let client = try client(config)
                 activeClient = client
                 defer { client.close() }
                 try await client.ensureFolder("")
                 try await client.ensureFolder(".aidokut-links")
-                let folder = NASComicPaths.filename(manga.displayTitle, identity: manga.id)
                 try await client.ensureFolder(folder)
-                let completed = chapters.filter { !$0.failed }
                 var uploaded = 0
                 var skipped = 0
                 var failed = 0
@@ -122,26 +151,45 @@ final class NASComicManager: ObservableObject {
                     do {
                         try await client.upload(file, path: folder + "/" + name)
                         uploaded += 1
-                    } catch NASComicError.exists { skipped += 1 }
+                        updateUpload { $0.uploaded = uploaded }
+                    } catch NASComicError.exists {
+                        skipped += 1
+                        updateUpload { $0.skipped = skipped }
+                    }
                     catch {
                         if Task.isCancelled || (error as? URLError)?.code == .cancelled { throw CancellationError() }
                         failed += 1
                         // Stop on a connection/permission error; completed files remain valid and repeat uploads skip them.
                         status = "已上传 \(uploaded) 章，跳过 \(skipped) 章；当前章节失败：" + NASConnection.message(for: error)
+                        updateUpload { $0.state = .failed; $0.error = NASConnection.message(for: error) }
                         return
                     }
                     let size = Int64((try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
                     let link = NASComicLink(source: manga.sourceId, manga: manga.mangaId, chapter: chapter.chapterId, path: folder + "/" + name, size: size, explicit: !PrivacyDisplayPolicy(enabled: true, marked: PrivacyDisplayStore.shared.policy.marked, knownExplicit: PrivacyDisplayStore.shared.policy.knownExplicit, explicitSources: PrivacyDisplayStore.shared.policy.explicitSources).allows(.init(sourceKey: manga.sourceId, mangaKey: manga.mangaId)))
                     let linkPath = Self.linkPath(source: manga.sourceId, manga: manga.mangaId, chapter: chapter.chapterId)
                     let linkData = try JSONEncoder().encode(link)
-                    try await client.writeLink(linkData, path: linkPath)
+                    do {
+                        try await client.writeLink(linkData, path: linkPath)
+                    } catch {
+                        if Task.isCancelled || (error as? URLError)?.code == .cancelled { throw CancellationError() }
+                        status = "章节文件已在 NAS，但阅读关联未保存；重试上传可补齐关联。"
+                        updateUpload { $0.state = .failed; $0.error = status + " " + NASConnection.message(for: error) }
+                        return
+                    }
                     UserDefaults.standard.set(linkData, forKey: "NASComics.link." + NASComicPaths.hash(config.fingerprint + linkPath))
+                    updateUpload { $0.linked += 1 }
                 }
                 status = "上传完成：\(uploaded) 章，同名跳过 \(skipped) 章，失败 \(failed) 章 · " + client.routeLabel
+                updateUpload { $0.state = .completed }
                 _ = try? await entries(folder)
                 _ = try? await entries("")
-            } catch is CancellationError { status = "上传已取消，已完成的章节保留；重试会跳过同名文件。" }
-            catch { status = NASConnection.message(for: error) }
+            } catch is CancellationError {
+                status = "上传已取消，已完成的章节保留；重试会跳过同名文件。"
+                updateUpload { $0.state = .cancelled; $0.error = status }
+            } catch {
+                status = NASConnection.message(for: error)
+                updateUpload { $0.state = .failed; $0.error = status }
+            }
         }
     }
     private func cacheURL(_ entry: NASComicEntry, config: Configuration) throws -> URL {

@@ -127,8 +127,46 @@ class ReaderPageView: UIView {
     }
 }
 
+enum ReaderNASOrigin: String {
+    case online = "本章使用 NAS 源 · 在线读取"
+    case cached = "本章使用 NAS 源 · 手机缓存"
+
+    static func visibleOrigin(
+        chapterKey: String,
+        pages: [Page],
+        visibleRange: ClosedRange<Int>,
+        successfullyLoaded: Set<Page>
+    ) -> Self? {
+        pages.enumerated().first(where: { index, page in
+            visibleRange.contains(index + 1) && page.chapterId == chapterKey && successfullyLoaded.contains(page)
+        })?.element.nasReadingOrigin
+    }
+}
+
+extension Page {
+    var nasReadingOrigin: ReaderNASOrigin? {
+        if let imageURL, URL(string: imageURL)?.scheme == "nascomic" { return .online }
+        if let zipURL, let url = URL(string: zipURL), url.isFileURL,
+           url.deletingLastPathComponent().lastPathComponent == "NASComicChapters" { return .cached }
+        return nil
+    }
+}
+
 extension ReaderPageView {
     func setPage(_ page: Page, sourceId: String? = nil, skipProcessing: Bool = false) async -> Bool {
+        let success = await loadPage(page, sourceId: sourceId, skipProcessing: skipProcessing)
+        // Only decoded pages count as successfully using NAS. Prefetching itself never shows a hint.
+        if success, !Task.isCancelled, currentPage == page, page.nasReadingOrigin != nil {
+            NotificationCenter.default.post(
+                name: Notification.Name("NASReaderPageReady"),
+                object: temporaryPageStore,
+                userInfo: ["page": page]
+            )
+        }
+        return success
+    }
+
+    private func loadPage(_ page: Page, sourceId: String? = nil, skipProcessing: Bool = false) async -> Bool {
         // Store current page data for reload functionality
         self.currentPage = page
 

@@ -99,6 +99,15 @@ enum Settings {
                 ))
             ),
             .init(
+                key: "PrivacyDisplay",
+                title: "隐私显示",
+                value: .page(.init(
+                    items: [],
+                    inlineTitle: true,
+                    icon: .system(name: "eye.slash.fill", color: "purple", inset: 5)
+                ))
+            ),
+            .init(
                 key: "NASSync",
                 title: "NAS 同步",
                 value: .page(.init(

@@ -7,6 +7,7 @@ final class NASComicClient: NSObject, URLSessionDownloadDelegate, @unchecked Sen
     let root: URL
     private var session: URLSession!
     private let router: NASRequestRouter
+    private let connectionMetrics: NASConnectionMetrics
     var routeLabel: String { router.routeLabel }
     private let progress: @Sendable (Int64, Int64) -> Void
 
@@ -16,6 +17,7 @@ final class NASComicClient: NSObject, URLSessionDownloadDelegate, @unchecked Sen
               root.query == nil, root.fragment == nil else { throw NASSyncError.invalidAddress }
         self.connection = connection
         self.router = NASRequestRouter(connection: connection)
+        self.connectionMetrics = NASConnectionMetrics(connection: connection)
         self.root = root.appendingPathComponent("", isDirectory: true)
         self.progress = progress
         super.init()
@@ -39,6 +41,13 @@ final class NASComicClient: NSObject, URLSessionDownloadDelegate, @unchecked Sen
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
         completionHandler(nil) // Never forward login details to a redirect target.
     }
+    func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
+        connectionMetrics.collect(task: task, metrics: metrics)
+    }
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        connectionMetrics.complete(task: task, error: error)
+    }
+
     private func request(_ method: String, path: String) throws -> URLRequest {
         var request = URLRequest(url: try NASComicPaths.url(path, root: root))
         request.httpMethod = method

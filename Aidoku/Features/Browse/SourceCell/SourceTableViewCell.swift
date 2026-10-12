@@ -38,6 +38,15 @@ class SourceTableViewCell: UITableViewCell {
 
     private var imageTask: ImageTask?
 
+    // Built-in sources do not have a remote icon URL.
+    private static let nasIcon: UIImage = UIGraphicsImageRenderer(size: CGSize(width: 48, height: 48)).image { _ in
+        UIColor.systemBlue.setFill()
+        UIBezierPath(roundedRect: CGRect(x: 0, y: 0, width: 48, height: 48), cornerRadius: 11).fill()
+        let symbol = UIImage(systemName: "externaldrive.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 26, weight: .medium))?
+            .withTintColor(.white, renderingMode: .alwaysOriginal)
+        symbol?.draw(in: CGRect(x: 10, y: 11, width: 28, height: 26))
+    }
+
     var buttonTitle: String? {
         get {
             getButton.title
@@ -201,6 +210,8 @@ class SourceTableViewCell: UITableViewCell {
             switch info.sourceId {
                 case LocalSourceRunner.sourceKey:
                     iconView.image = UIImage.local
+                case NASSourceRunner.sourceKey:
+                    iconView.image = Self.nasIcon
                 case let x where x.hasPrefix(KomgaSourceRunner.sourceKeyPrefix):
                     iconView.image = UIImage.komga
                 case let x where x.hasPrefix(KavitaSourceRunner.sourceKeyPrefix):

@@ -25,6 +25,11 @@ class ReaderViewController: BaseObservingViewController {
     var defaultReadingMode: ReadingMode?
     private var tapZone: TapZone?
     private let temporaryPageStore = ReaderTemporaryPageStore()
+    private var successfulNASPages: Set<Page> = []
+    private var nasHintChapter: String?
+    private var visiblePageRange = 1...1
+    private var nasHintView: UIView?
+    private var nasHintDismissTask: Task<Void, Never>?
 
     private var chapterList: [AidokuRunner.Chapter]
     private var chaptersToMark: [AidokuRunner.Chapter] = []
@@ -338,8 +343,19 @@ class ReaderViewController: BaseObservingViewController {
             self.navigationController?.view.isHidden = true
             self.dismiss(animated: false)
         }
+        addObserver(forName: "NASReaderPageReady") { [weak self] notification in
+            guard let self,
+                  let store = notification.object as? ReaderTemporaryPageStore,
+                  store === self.temporaryPageStore,
+                  let page = notification.userInfo?["page"] as? Page else { return }
+            self.successfulNASPages.insert(page)
+            self.showNASReadingHintIfNeeded()
+        }
         addObserver(forName: "NASReadingSourceChanged") { [weak self] notification in
             guard let self, notification.object as? String == String(describing: self.manga.identifier) else { return }
+            self.successfulNASPages.removeAll()
+            self.nasHintChapter = nil
+            self.dismissNASReadingHint()
             let type: Reader = self.reader is ReaderWebtoonViewController ? .scroll : .paged
             let page = self.currentPage
             self.reader?.remove()
@@ -348,7 +364,9 @@ class ReaderViewController: BaseObservingViewController {
             self.reader?.setChapter(self.chapter, startPage: page)
         }
         addObserver(forName: "NASReadingError") { [weak self] notification in
-            guard let self, self.presentedViewController == nil else { return }
+            guard let self, self.presentedViewController == nil,
+                  notification.userInfo?["manga"] as? MangaIdentifier == self.manga.identifier,
+                  notification.userInfo?["chapter"] as? String == self.chapter.key else { return }
             let alert = UIAlertController(title: "NAS 读取未完成", message: notification.object as? String, preferredStyle: .alert)
             alert.addAction(UIAlertAction(title: "切换原图源", style: .default) { [weak self] _ in
                 guard let self else { return }
@@ -439,6 +457,7 @@ class ReaderViewController: BaseObservingViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
 
+        showNASReadingHintIfNeeded()
         sessionReadPages = [self.currentPage]
         sessionStartDate = Date.now
         sessionLastInteraction = nil
@@ -462,6 +481,7 @@ class ReaderViewController: BaseObservingViewController {
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        dismissNASReadingHint()
 
         (reader as? ReaderWebtoonViewController)?.stopAutoScroll()
 
@@ -1080,6 +1100,8 @@ extension ReaderViewController: @MainActor ReaderHoldingDelegate {
         }
 
         self.chapter = chapter
+        nasHintChapter = nil
+        dismissNASReadingHint()
         self.chaptersToMark = [chapter]
         configureBarToggleTapGestures()
         configureDictionaryLookupGesture()
@@ -1109,6 +1131,8 @@ extension ReaderViewController: @MainActor ReaderHoldingDelegate {
 
         let page = max(1, min(pages.lowerBound, totalPages))
         currentPage = page
+        visiblePageRange = pages
+        showNASReadingHintIfNeeded()
         currentPosition = position
         toolbarView.currentPage = page
         toolbarView.updateSliderPosition()
@@ -1122,6 +1146,65 @@ extension ReaderViewController: @MainActor ReaderHoldingDelegate {
         if pages.upperBound >= totalPages && !isPrePaginationPlaceholder {
             setCompleted()
         }
+    }
+
+    private func showNASReadingHintIfNeeded() {
+        guard nasHintChapter != chapter.key, viewIfLoaded?.window != nil,
+              presentedViewController == nil else { return }
+        guard let origin = ReaderNASOrigin.visibleOrigin(
+            chapterKey: chapter.key,
+            pages: pages,
+            visibleRange: visiblePageRange,
+            successfullyLoaded: successfulNASPages
+        ) else { return }
+        nasHintChapter = chapter.key
+        dismissNASReadingHint()
+
+        let label = UILabel()
+        label.text = origin.rawValue
+        label.font = .preferredFont(forTextStyle: .subheadline)
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = .white
+        label.numberOfLines = 2
+        label.textAlignment = .center
+        label.translatesAutoresizingMaskIntoConstraints = false
+
+        let hint = UIView()
+        hint.backgroundColor = UIColor.black.withAlphaComponent(0.78)
+        hint.layer.cornerRadius = 16
+        hint.layer.cornerCurve = .continuous
+        hint.isUserInteractionEnabled = false
+        hint.translatesAutoresizingMaskIntoConstraints = false
+        hint.addSubview(label)
+        view.addSubview(hint)
+        NSLayoutConstraint.activate([
+            hint.centerXAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerXAnchor),
+            hint.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -88),
+            hint.widthAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.widthAnchor, constant: -32),
+            label.leadingAnchor.constraint(equalTo: hint.leadingAnchor, constant: 16),
+            label.trailingAnchor.constraint(equalTo: hint.trailingAnchor, constant: -16),
+            label.topAnchor.constraint(equalTo: hint.topAnchor, constant: 10),
+            label.bottomAnchor.constraint(equalTo: hint.bottomAnchor, constant: -10)
+        ])
+        nasHintView = hint
+        hint.alpha = UIAccessibility.isReduceMotionEnabled ? 1 : 0
+        UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : 0.2) { hint.alpha = 1 }
+        UIAccessibility.post(notification: .announcement, argument: origin.rawValue)
+        nasHintDismissTask = Task { @MainActor [weak self, weak hint] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled, let self, let hint, self.nasHintView === hint else { return }
+            UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : 0.2) {
+                hint.alpha = 0
+            } completion: { _ in hint.removeFromSuperview() }
+            self.nasHintView = nil
+        }
+    }
+
+    private func dismissNASReadingHint() {
+        nasHintDismissTask?.cancel()
+        nasHintDismissTask = nil
+        nasHintView?.removeFromSuperview()
+        nasHintView = nil
     }
 
     private func updateDescriptionButton(pages: ClosedRange<Int>) {

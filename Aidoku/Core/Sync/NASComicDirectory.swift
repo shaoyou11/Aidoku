@@ -10,6 +10,22 @@ struct NASComicEntry: Identifiable, Codable, Hashable, Sendable {
     var id: String { path }
 }
 
+struct NASComicUploadSummary: Codable, Sendable {
+    enum State: String, Codable, Sendable { case uploading, completed, cancelled, failed }
+    let sourceID: String
+    let mangaID: String
+    let title: String
+    let folder: String
+    let fingerprint: String
+    let total: Int
+    var uploaded = 0
+    var skipped = 0
+    var linked = 0
+    var state = State.uploading
+    var error: String?
+    var updatedAt = Date()
+}
+
 enum NASComicError: LocalizedError {
     case invalidArchive, tooLarge, cacheFull, wrongConnection, exists, busy, requiresWholeArchive
     var errorDescription: String? {

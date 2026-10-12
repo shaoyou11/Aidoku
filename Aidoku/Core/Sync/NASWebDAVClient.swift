@@ -79,12 +79,14 @@ final class NASWebDAVClient: NSObject, URLSessionTaskDelegate, @unchecked Sendab
     private let connection: NASConnection
     private var session: URLSession!
     private let router: NASRequestRouter
+    private let connectionMetrics: NASConnectionMetrics
     var routeLabel: String { router.routeLabel }
     static let maxBytes = 25 * 1024 * 1024
 
     init(connection: NASConnection, configuration: URLSessionConfiguration = .ephemeral) {
         self.connection = connection
         self.router = NASRequestRouter(connection: connection)
+        self.connectionMetrics = NASConnectionMetrics(connection: connection)
         super.init()
         configuration.timeoutIntervalForRequest = 12
         configuration.timeoutIntervalForResource = 90
@@ -101,6 +103,13 @@ final class NASWebDAVClient: NSObject, URLSessionTaskDelegate, @unchecked Sendab
         newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void
     ) {
         completionHandler(nil)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
+        connectionMetrics.collect(task: task, metrics: metrics)
+    }
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        connectionMetrics.complete(task: task, error: error)
     }
 
     private func request(_ method: String, url: URL? = nil) throws -> URLRequest {

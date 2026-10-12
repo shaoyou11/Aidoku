@@ -37,6 +37,22 @@ import Foundation
         do { let _: Int = try await auth.send(request) { _ in attempts += 1; throw NASSyncError.authentication }; fatalError("expected failure") }
         catch { expect(attempts == 1, "authentication errors must not be masked by failover") }
         expect(!NASRequestRouter.canFailOver(URLError(.cancelled)), "cancelled view request is not a connection failure")
+        let domainConnection = NASConnection(folder: "https://ipv6-labelled.invalid/dav/", fallbackFolder: "https://secondary.invalid:8443/backup/")
+        let observed = NASConnectionMetrics.successfulSnapshot(url: URL(string: "https://ipv6-labelled.invalid/dav/chapter.cbz")!,
+            remoteAddress: "192.0.2.10", status: 206, error: nil, connection: domainConnection)
+        expect(observed?.family == "IPv4" && observed?.route == "优先地址", "family must follow socket metrics rather than endpoint label")
+        let fallbackObservation = NASConnectionMetrics.successfulSnapshot(url: URL(string: "https://secondary.invalid:8443/backup/chapter.cbz")!,
+            remoteAddress: "2001:db8::2", status: 207, error: nil, connection: domainConnection)
+        expect(fallbackObservation?.family == "IPv6" && fallbackObservation?.route == "备用地址", "fallback may itself be IPv6; report actual successful endpoint")
+        expect(fallbackObservation?.address == "https://secondary.invalid:8443", "only origin is shown, without comic paths")
+        let sanitized = NASConnectionSnapshot(url: URL(string: "https://user:secret@nas.invalid/private?token=secret#private")!, remoteAddress: "not-an-IP", route: "优先地址")
+        expect(sanitized?.address == "https://nas.invalid" && sanitized?.family == "未知" && sanitized?.remoteAddress == nil, "strip credentials and never guess missing socket metrics")
+        for status in [401, 403, 500] {
+            expect(NASConnectionMetrics.successfulSnapshot(url: try domainConnection.folderURL(), remoteAddress: "192.0.2.10", status: status, error: nil, connection: domainConnection) == nil, "HTTP failures must not publish success")
+        }
+        expect(NASConnectionMetrics.successfulSnapshot(url: try domainConnection.folderURL(), remoteAddress: "192.0.2.10", status: 200, error: URLError(.networkConnectionLost), connection: domainConnection) == nil, "received headers followed by broken transfer must not publish success")
+        expect(NASConnectionMetrics.successfulSnapshot(url: try domainConnection.folderURL(), remoteAddress: "192.0.2.10", status: 200, error: nil, connection: domainConnection, networkLoad: false) == nil, "cache reads must not claim a new NAS connection")
+        expect(NASConnectionMetrics.successfulSnapshot(url: URL(string: "https://foreign.invalid/")!, remoteAddress: "192.0.2.10", status: 200, error: nil, connection: domainConnection) == nil, "foreign-origin response must never identify the configured NAS")
         let xml = """
         <d:multistatus xmlns:d="DAV:">
         <d:response><d:href>/dav/漫画/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
@@ -54,6 +70,6 @@ import Foundation
         let key = NASComicPaths.key("series/chapter.cbz", fingerprint: fingerprint)
         expect(!key.contains("test") && !key.contains("db8"), "reader identity must not contain credentials or server address")
         do { _ = try NASComicPaths.path(key, fingerprint: "another"); fatalError("cross NAS identity accepted") } catch NASComicError.wrongConnection {}
-        print("PASS: NAS comics paths, DAV parsing, IPv6, fallback, cancellation, legacy settings and stable identity")
+        print("PASS: NAS comics paths, DAV parsing, IPv6, fallback, cancellation, observed IP family, redaction, failed/cache isolation, legacy settings and stable identity")
     }
 }

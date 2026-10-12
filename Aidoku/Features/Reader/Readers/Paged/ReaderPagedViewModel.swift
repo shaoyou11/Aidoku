@@ -37,22 +37,23 @@ class ReaderPagedViewModel {
             preloadedChapter = nil
         } else {
             if !pages.isEmpty {
-                preloadedChapter = chapter
+                preloadedChapter = self.chapter
                 preloadedPages = pages
             }
             self.chapter = chapter
-            pages = await getPages(chapter: chapter)
+            pages = await getPages(chapter: chapter, showErrors: true)
         }
+        self.chapter = chapter
     }
 
     func preload(chapter: AidokuRunner.Chapter) async {
         guard preloadedChapter != chapter else { return }
         preloadedChapter = nil
-        preloadedPages = await getPages(chapter: chapter)
-        preloadedChapter = chapter
+        preloadedPages = await getPages(chapter: chapter, showErrors: false)
+        preloadedChapter = preloadedPages.isEmpty ? nil : chapter
     }
 
-    private func getPages(chapter: AidokuRunner.Chapter) async -> [Page] {
+    private func getPages(chapter: AidokuRunner.Chapter, showErrors: Bool) async -> [Page] {
         let sourceId = source?.key ?? manga.sourceKey
         let identifier = ChapterIdentifier(
             sourceKey: sourceId,
@@ -67,7 +68,13 @@ class ReaderPagedViewModel {
                     return nasPages.map { $0.toOld(sourceId: sourceId, chapterId: chapter.key, language: language) }
                 }
             } catch {
-                NotificationCenter.default.post(name: Notification.Name("NASReadingError"), object: NASConnection.message(for: error))
+                if showErrors, !Task.isCancelled {
+                    NotificationCenter.default.post(
+                        name: Notification.Name("NASReadingError"),
+                        object: NASConnection.message(for: error),
+                        userInfo: ["manga": manga.identifier, "chapter": chapter.key]
+                    )
+                }
                 return []
             }
         }
