@@ -17,4 +17,4 @@ node = Path('Aidoku/Features/Reader/Readers/Webtoon/ReaderWebtoonPageNode.swift'
 assert 'await ReaderPageView.imageRequest(url: url, context: context, source: source, width: pageWidth)' in node
 assert 'let urlRequest = ' not in node[node.index('private func loadImage(url:'):node.index('private func loadImage(base64:')]
 (out / 'Sources' / 'Check' / 'Factory.swift').write_text('import AppKit\nimport Nuke\n@MainActor enum ReaderPageView {\n' + method + '\n}\n')
-(out / 'Sources' / 'Check' / 'main.swift').write_text(Path('Tests/NASImages/main.swift').read_text())
+(out / 'Sources' / 'Check' / 'Check.swift').write_text(Path('Tests/NASImages/main.swift').read_text())
