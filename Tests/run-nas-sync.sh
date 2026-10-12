@@ -44,3 +44,11 @@ xcrun swiftc Aidoku/Core/Library/Models/MangaIdentifier.swift Aidoku/Core/Privac
 "$NAS_TEST_DIR/privacy"
 
 bash Tests/NASReader/run.sh
+
+NAS_NUKE_PACKAGE="${NAS_NUKE_PACKAGE:-../Aidoku-build/SourcePackages/checkouts/Nuke}"
+if [ ! -d "$NAS_NUKE_PACKAGE" ]; then
+    for candidate in "$HOME"/Library/Developer/Xcode/DerivedData/Aidoku-*/SourcePackages/checkouts/Nuke; do
+        if [ -d "$candidate" ]; then NAS_NUKE_PACKAGE="$candidate"; break; fi
+    done
+fi
+bash Tests/NASImages/run.sh "$NAS_NUKE_PACKAGE"

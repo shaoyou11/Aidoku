@@ -7,6 +7,8 @@
 
 import AidokuRunner
 import Foundation
+import ImageIO
+import UIKit
 import ZIPFoundation
 
 /*
@@ -559,31 +561,46 @@ extension DownloadManager {
 
     /// Load metadata from manga directory.
     private func findComicInfo(in directory: URL) -> ComicInfo? {
-        // check for ComicInfo.xml in any subdirectory
-        for subdirectory in directory.contents where subdirectory.isDirectory || subdirectory.pathExtension == "cbz" {
-            do {
-                if directory.pathExtension == "cbz" {
-                    if let comicInfo = ComicInfo.load(from: directory) {
-                        return comicInfo
-                    }
-                } else {
-                    let xmlURL = subdirectory.appendingPathComponent("ComicInfo.xml")
-                    if xmlURL.exists {
-                        let data = try Data(contentsOf: xmlURL)
-                        if
-                            let string = String(data: data, encoding: .utf8),
-                            let comicInfo = ComicInfo.load(xmlString: string)
-                        {
-                            return comicInfo
-                        }
-                    }
-                }
-            } catch {
-                LogManager.logger.error("Failed to load manga metadata from ComicInfo.xml: \(error)")
-            }
+        for child in directory.contents where child.isDirectory || child.pathExtension == "cbz" {
+            if let info = getComicInfo(in: child) { return info }
         }
 
         return nil
+    }
+
+    func downloadedDetails(_ manga: DownloadedMangaInfo) -> AidokuRunner.Manga {
+        let directory = cache.directory(for: manga.mangaIdentifier)
+        var details = findComicInfo(in: directory)?.copy(into: manga.toManga()) ?? manga.toManga()
+        let savedCover = directory.appendingPathComponent("cover.png")
+        let preview = directory.appendingPathComponent("cover-preview.jpg")
+        if savedCover.exists { details.cover = savedCover.absoluteString }
+        else if preview.exists { details.cover = preview.absoluteString }
+        else {
+            // Recover a local thumbnail without depending on the original image server.
+            for child in directory.contents.sorted(by: { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }) {
+                var bytes: Data?
+                if child.pathExtension == "cbz", let archive = try? Archive(url: child, accessMode: .read),
+                   let first = archive.filter({ $0.type == .file && LocalFileManager.allowedPageExtensions.contains(($0.path as NSString).pathExtension.lowercased()) })
+                    .sorted(by: { $0.path.localizedStandardCompare($1.path) == .orderedAscending }).first,
+                   first.uncompressedSize <= 64 * 1024 * 1024 {
+                    var data = Data()
+                    if (try? archive.extract(first, consumer: { data.append($0) })) != nil { bytes = data }
+                } else if child.isDirectory,
+                          let first = child.contents.filter({ LocalFileManager.allowedPageExtensions.contains($0.pathExtension.lowercased()) })
+                            .sorted(by: { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }).first,
+                          (try? first.resourceValues(forKeys: [.fileSizeKey]).fileSize).map({ $0 <= 64 * 1024 * 1024 }) == true {
+                    bytes = try? Data(contentsOf: first)
+                }
+                if let bytes, let source = CGImageSourceCreateWithData(bytes as CFData, nil),
+                   let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                        kCGImageSourceThumbnailMaxPixelSize: 480, kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary),
+                   let jpeg = UIImage(cgImage: image).jpegData(compressionQuality: 0.82) {
+                    if (try? jpeg.write(to: preview, options: .atomic)) != nil { details.cover = preview.absoluteString }
+                    break
+                }
+            }
+        }
+        return details
     }
 
     /// Calculate the total size of a directory in bytes.

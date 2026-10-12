@@ -111,11 +111,14 @@ extension NASComicManager {
         guard config.fingerprint == page.fingerprint else { throw NASComicError.wrongConnection }
         let client = try NASComicClient(connection: config.connection, root: config.root)
         defer { client.close() }
-        let header = try await client.range(page.archive, start: page.page.offset, count: 30)
+        return try await archiveData(page.page, archive: page.archive, client: client)
+    }
+    func archiveData(_ record: NASZIPEntry, archive: NASComicEntry, client: NASComicClient) async throws -> Data {
+        let header = try await client.range(archive, start: record.offset, count: 30)
         guard NASZIPIndex.u32(header, 0) == 0x04034b50 else { throw NASComicError.invalidArchive }
-        let length = Int64(30 + Int(NASZIPIndex.u16(header, 26)) + Int(NASZIPIndex.u16(header, 28))) + page.page.compressedSize
-        let local = try await client.range(page.archive, start: page.page.offset, count: length)
-        return try Self.decodeOnlinePage(local, entry: page.page)
+        let length = Int64(30 + Int(NASZIPIndex.u16(header, 26)) + Int(NASZIPIndex.u16(header, 28))) + record.compressedSize
+        let local = try await client.range(archive, start: record.offset, count: length)
+        return try Self.decodeOnlinePage(local, entry: record)
     }
     nonisolated static func decodeOnlinePage(_ local: Data, entry: NASZIPEntry) throws -> Data {
         let zip = try NASZIPIndex.singleArchive(local: local, entry: entry)

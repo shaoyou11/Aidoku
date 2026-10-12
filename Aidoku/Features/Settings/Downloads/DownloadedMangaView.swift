@@ -176,10 +176,11 @@ struct DownloadedMangaView: View {
     }
 
     private var mangaInfoHeader: some View {
+        VStack(alignment: .leading, spacing: 12) {
         HStack(spacing: 12) {
             MangaCoverView(
                 source: SourceManager.shared.store.source(for: viewModel.manga.sourceId),
-                coverImage: viewModel.manga.coverUrl ?? "",
+                coverImage: viewModel.details?.cover ?? viewModel.manga.coverUrl ?? "",
                 width: 56,
                 height: 56 * 3/2
             )
@@ -207,6 +208,13 @@ struct DownloadedMangaView: View {
             }
 
             Spacer()
+        }
+        if let authors = viewModel.details?.authors, !authors.isEmpty {
+            Text(authors.joined(separator: "、")).font(.subheadline).foregroundStyle(.secondary)
+        }
+        if let description = viewModel.details?.description, !description.isEmpty {
+            Text(description).font(.subheadline).foregroundStyle(.secondary).textSelection(.enabled)
+        }
         }
         .padding(.vertical, 4)
     }

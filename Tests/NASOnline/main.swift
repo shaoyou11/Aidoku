@@ -105,6 +105,17 @@ final class MidstreamServer: URLProtocol {
         let central = archive.subdata(in: Int(directory.offset) ..< Int(directory.offset + directory.count))
         let entries = try NASZIPIndex.entries(central)
         expect(entries.map(\.name) == ["2.jpg", "10.png"], "only image pages, in natural page order")
+        let metadataEntries = try NASZIPIndex.entries(central, includeMetadata: true)
+        let info = metadataEntries.first(where: { $0.name == "ComicInfo.xml" })!
+        let infoStart = Int(info.offset)
+        let infoLength = 30 + Int(NASZIPIndex.u16(archive, infoStart + 26)) + Int(NASZIPIndex.u16(archive, infoStart + 28)) + Int(info.compressedSize)
+        let infoXML = try NASComicManager.decodeOnlinePage(archive.subdata(in: infoStart ..< infoStart + infoLength), entry: info)
+        expect(String(data: infoXML, encoding: .utf8) == "<ComicInfo/>", "metadata must decode via ranges without becoming a reader page")
+        var oversizedInfo = info.centralRecord
+        oversizedInfo.replaceSubrange(24..<28, with: [0, 0, 32, 0])
+        invalid { _ = try NASZIPIndex.entries(oversizedInfo, includeMetadata: true) }
+        print("PASS: bounded ComicInfo metadata extraction and separation from image pages")
+
         expect(NASZIPIndex.u16(entries[0].centralRecord, 10) == 0 && NASZIPIndex.u16(entries[1].centralRecord, 10) == 8, "stored and deflated pages both indexed")
         for (entry, expected) in zip(entries, ["page2.bin", "page10.bin"]) {
             let offset = Int(entry.offset)

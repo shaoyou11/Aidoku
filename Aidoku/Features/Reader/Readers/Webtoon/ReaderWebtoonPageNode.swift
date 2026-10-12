@@ -321,41 +321,8 @@ extension ReaderWebtoonPageNode {
     }
 
     private func loadImage(url: URL, context: PageContext?) async {
-        let urlRequest = if !url.isFileURL, let source {
-            await source.getModifiedImageRequest(url: url, context: context)
-        } else {
-            URLRequest(url: url)
-        }
-
-        let width = pageWidth
-        let shouldDownsample = UserDefaults.standard.bool(forKey: "Reader.downsampleImages") && width > 0
-        let shouldUpscale = UserDefaults.standard.bool(forKey: "Reader.upscaleImages")
-        let shouldCropBorders = UserDefaults.standard.bool(forKey: "Reader.cropBorders")
-        var processors: [ImageProcessing] = []
-        var usePageProcessor = false
-        if
-            let source,
-            source.features.processesPages,
-            !url.isFileURL
-        {
-            // only process pages if the source supports it and the image isn't downloaded
-            processors.append(PageInterceptorProcessor(source: source, pageContext: context))
-            usePageProcessor = true
-        }
-        if shouldCropBorders {
-            processors.append(CropBordersProcessor())
-        }
-        if shouldDownsample {
-            processors.append(await DownsampleProcessor(width: width))
-        } else if shouldUpscale {
-            processors.append(UpscaleProcessor())
-        }
-
-        let request = ImageRequest(
-            urlRequest: urlRequest,
-            processors: processors,
-            userInfo: [.processesKey: usePageProcessor]
-        )
+        // Use the same data loader as paged reading, including authenticated NAS ranges.
+        let request = await ReaderPageView.imageRequest(url: url, context: context, source: source, width: pageWidth)
 
         // Store current image request for reload functionality
         self.currentImageRequest = request
@@ -512,6 +479,10 @@ extension ReaderWebtoonPageNode {
             imageNode.image = image
 
             Task { @MainActor in
+                if page.nasReadingOrigin != nil {
+                    NotificationCenter.default.post(name: Notification.Name("NASReaderPageReady"),
+                                                    object: temporaryPageStore, userInfo: ["page": page])
+                }
                 imageNode.isUserInteractionEnabled = true
                 imageNode.view.interactions
                     .filter { $0 is UIContextMenuInteraction }

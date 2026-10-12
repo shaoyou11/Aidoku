@@ -14,6 +14,7 @@ extension DownloadedMangaView {
     class ViewModel: ObservableObject {
         @Published var manga: DownloadedMangaInfo
 
+        @Published var details: AidokuRunner.Manga?
         @Published var chapters: [DownloadedChapterInfo] = []
         @Published var isLoading = true
         @Published var showingDeleteAllConfirmation = false
@@ -40,6 +41,7 @@ extension DownloadedMangaView.ViewModel {
         isLoading = true
 
         let downloadedChapters = await DownloadManager.shared.getDownloadedChapters(for: manga.mangaIdentifier)
+        details = await DownloadManager.shared.downloadedDetails(manga)
 
         await MainActor.run {
             self.chapters = self.sortChapters(downloadedChapters)

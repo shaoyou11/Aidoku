@@ -20,9 +20,11 @@ final class NASSourceRunner: AidokuRunner.Runner {
         var entries: [NASComicEntry] = []
         for entry in allEntries where await manager.isComicVisible(path: entry.path, isDirectory: entry.isDirectory) { entries.append(entry) }
         var manga: [AidokuRunner.Manga] = []
-        if entries.contains(where: { !$0.isDirectory }) { manga.append(try await manager.manga(folder: "", entries: entries)) }
+        if entries.contains(where: { !$0.isDirectory }) { manga.append(try await manager.detailedManga(folder: "", entries: entries, allChapters: false)) }
         for entry in entries where entry.isDirectory {
-            manga.append(try await manager.manga(folder: entry.path, entries: []))
+            let children = (try? await manager.entries(entry.path, refresh: false)) ?? []
+            let book = try await manager.detailedManga(folder: entry.path, entries: children, allChapters: false)
+            if await PrivacyDisplayStore.shared.allows(book) { manga.append(book) }
         }
         if let query, !query.isEmpty { manga = manga.filter { $0.title.localizedCaseInsensitiveContains(query) } }
         return .init(entries: manga, hasNextPage: false)
@@ -31,7 +33,7 @@ final class NASSourceRunner: AidokuRunner.Runner {
         let manager = await NASComicManager.shared
         let path = try await manager.path(for: manga.key)
         let entries = try await manager.entries(path)
-        return try await manager.manga(folder: path, entries: entries)
+        return try await manager.detailedManga(folder: path, entries: entries)
     }
     func getPageList(manga: AidokuRunner.Manga, chapter: AidokuRunner.Chapter) async throws -> [AidokuRunner.Page] {
         try await NASComicManager.shared.pages(chapter: chapter)

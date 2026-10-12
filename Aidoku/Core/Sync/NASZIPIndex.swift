@@ -29,7 +29,7 @@ enum NASZIPIndex {
         }
         throw NASComicError.invalidArchive
     }
-    static func entries(_ data: Data) throws -> [NASZIPEntry] {
+    static func entries(_ data: Data, includeMetadata: Bool = false) throws -> [NASZIPEntry] {
         var offset = 0
         var result: [NASZIPEntry] = []
         let extensions: Set<String> = ["jpg", "jpeg", "png", "webp", "gif", "heic", "avif"]
@@ -45,7 +45,9 @@ enum NASZIPIndex {
             guard !name.hasPrefix("/"), !name.contains("\\"), !name.split(separator: "/").contains("..") else { throw NASComicError.invalidArchive }
             let compressed = Int64(u32(data, offset + 20)), size = Int64(u32(data, offset + 24)), local = Int64(u32(data, offset + 42))
             guard compressed < UInt32.max, size < UInt32.max, local < UInt32.max else { throw NASComicError.requiresWholeArchive }
-            if extensions.contains((name as NSString).pathExtension.lowercased()), !(name as NSString).lastPathComponent.hasPrefix(".") {
+            let isMetadata = includeMetadata && (name as NSString).lastPathComponent.lowercased() == "comicinfo.xml"
+            if isMetadata || (extensions.contains((name as NSString).pathExtension.lowercased()) && !(name as NSString).lastPathComponent.hasPrefix(".")) {
+                if isMetadata && (size > 1024 * 1024 || compressed > 1024 * 1024) { throw NASComicError.invalidArchive }
                 guard compressed > 0, compressed <= 64 * 1024 * 1024, size > 0, size <= 64 * 1024 * 1024,
                       result.count < 20000 else { throw NASComicError.invalidArchive }
                 result.append(.init(name: name, offset: local, compressedSize: compressed, size: size,

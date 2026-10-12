@@ -212,7 +212,7 @@ extension ReaderPageView {
         return await imageRequest(url: url, context: context, source: source)
     }
 
-    static func imageRequest(url: URL, context: PageContext? = nil, source: AidokuRunner.Source?) async -> ImageRequest {
+    static func imageRequest(url: URL, context: PageContext? = nil, source: AidokuRunner.Source?, width: CGFloat? = nil) async -> ImageRequest {
         let urlRequest = if !url.isFileURL, url.scheme != "nascomic", let source {
             await source.getModifiedImageRequest(url: url, context: context)
         } else {
@@ -234,7 +234,7 @@ extension ReaderPageView {
             processors.append(CropBordersProcessor())
         }
         if UserDefaults.standard.bool(forKey: "Reader.downsampleImages") {
-            processors.append(DownsampleProcessor(width: UIScreen.main.bounds.width))
+            processors.append(DownsampleProcessor(width: (width ?? 0) > 0 ? width! : UIScreen.main.bounds.width))
         } else if UserDefaults.standard.bool(forKey: "Reader.upscaleImages") {
             processors.append(UpscaleProcessor())
         }
