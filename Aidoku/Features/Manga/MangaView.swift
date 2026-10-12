@@ -62,6 +62,15 @@ struct MangaView: View {
             List(selection: $selectedChapters) {
                 headerView
 
+                if viewModel.manga.sourceKey == NASSourceRunner.sourceKey,
+                   let folder = try? NASComicManager.shared.path(for: viewModel.manga.key) {
+                    NavigationLink {
+                        NASComicLibraryView(folder: folder)
+                    } label: {
+                        Label("管理 NAS 漫画 / 移到回收站", systemImage: "externaldrive")
+                    }
+                }
+
                 if let error = viewModel.error {
                     ErrorView(
                         error: error,

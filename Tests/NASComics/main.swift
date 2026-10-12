@@ -17,9 +17,47 @@ final class DeleteServer: URLProtocol {
     }
 }
 
+final class TrashServer: URLProtocol {
+    static var methods: [String] = []
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func stopLoading() { }
+    override func startLoading() {
+        let method = request.httpMethod ?? ""
+        Self.methods.append(method)
+        precondition(method != "DELETE")
+        var data = Data()
+        let status: Int
+        if method == "PROPFIND" {
+            status = 207
+            data = Data("<d:multistatus xmlns:d=\"DAV:\"><d:response><d:href>/comics/book/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>".utf8)
+        } else {
+            status = 201
+            if method == "MOVE" {
+                precondition(request.value(forHTTPHeaderField: "Overwrite") == "F")
+                precondition(URL(string: request.value(forHTTPHeaderField: "Destination")!)!.path.hasPrefix("/comics/.aidokut-trash/"))
+            } else { precondition(method == "MKCOL") }
+        }
+        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Length": String(data.count)])!, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+}
+
 @main struct Tests {
     static func expect(_ condition: Bool, _ text: String) { if !condition { fatalError(text) } }
     static func main() async throws {
+        let trashConfig = URLSessionConfiguration.ephemeral
+        trashConfig.protocolClasses = [TrashServer.self]
+        let trashConnection = NASConnection(folder: "https://nas.invalid/comics/")
+        let trashClient = try NASComicClient(connection: trashConnection, root: trashConnection.folderURL(), configuration: trashConfig)
+        defer { trashClient.close() }
+        for path in ["", "../outside", ".aidokut-trash", "book/../outside"] {
+            do { try await trashClient.trashFolder(path); fatalError("unsafe folder accepted") } catch NASSyncError.invalidAddress { }
+        }
+        expect(TrashServer.methods.isEmpty, "unsafe moves rejected before network")
+        try await trashClient.trashFolder("book")
+        expect(TrashServer.methods == ["PROPFIND", "MKCOL", "MOVE"], "one reversible move, never recursive deletion")
         let deleteConfig = URLSessionConfiguration.ephemeral
         deleteConfig.protocolClasses = [DeleteServer.self]
         let deleteConnection = NASConnection(folder: "https://nas.invalid/comics/")

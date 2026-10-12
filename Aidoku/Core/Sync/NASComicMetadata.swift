@@ -1,6 +1,7 @@
 import AidokuRunner
 import Foundation
 import ImageIO
+import Nuke
 import UIKit
 
 /// Small local previews, independent of the phone's downloaded chapter files.
@@ -62,16 +63,44 @@ extension NASComicManager {
         return result
     }
 
+    /// Prefer the original book cover, not the often blank first strip of a webtoon chapter.
+    func bookCover(folder: String) async -> URL? {
+        guard let config = try? configuration(), let directory = try? previewDirectory() else { return nil }
+        let saved = directory.appendingPathComponent(NASComicPaths.hash(config.fingerprint + folder) + "-book.jpg")
+        if saved.exists { return saved }
+        for (key, value) in UserDefaults.standard.dictionaryRepresentation() where key.hasPrefix("NASComics.link.") {
+            guard let data = value as? Data, let link = try? JSONDecoder().decode(NASComicLink.self, from: data),
+                  link.deleted != true, (link.path as NSString).deletingLastPathComponent == folder,
+                  key == "NASComics.link." + NASComicPaths.hash(config.fingerprint + Self.linkPath(source: link.source, manga: link.manga, chapter: link.chapter)),
+                  let original = CoreDataManager.shared.getManga(mangaId: .init(sourceKey: link.source, mangaKey: link.manga)),
+                  let cover = original.cover, let url = URL(string: cover) else { continue }
+            let source = SourceManager.shared.store.source(for: link.source)
+            let request = await source?.getModifiedImageRequest(url: url, context: nil) ?? URLRequest(url: url)
+            if let image = try? await ImagePipeline.shared.image(for: ImageRequest(urlRequest: request, processors: [DownsampleProcessor(width: 480)])),
+               let jpeg = image.jpegData(compressionQuality: 0.85),
+               (try? jpeg.write(to: saved, options: [.atomic, .completeFileProtection])) != nil { return saved }
+        }
+        // Covers uploaded alongside new chapters are also available on another device.
+        guard let client = try? NASComicClient(connection: config.connection, root: config.root) else { return nil }
+        defer { client.close() }
+        let path = (folder.isEmpty ? "" : folder + "/") + ".aidokut-cover.jpg"
+        if let entry = try? await client.stat(path), entry.size <= 2 * 1024 * 1024,
+           let data = try? await client.range(entry, start: 0, count: entry.size), UIImage(data: data) != nil,
+           (try? data.write(to: saved, options: [.atomic, .completeFileProtection])) != nil { return saved }
+        return nil
+    }
+
     func detailedManga(folder: String, entries: [NASComicEntry], allChapters: Bool = true) async throws -> AidokuRunner.Manga {
         var result = try manga(folder: folder, entries: entries)
         let knownExplicit = result.contentRating == .nsfw
+        let originalCover = await bookCover(folder: folder)
         let files = entries.filter { !$0.isDirectory }
         var chapters = result.chapters ?? []
         for (index, entry) in files.enumerated() {
             try Task.checkCancellation()
             guard allChapters || index == 0 else { break }
             // A missing preview must not block browsing or opening otherwise readable chapters.
-            guard let preview = try? await metadata(entry, cover: index == 0) else { continue }
+            guard let preview = try? await metadata(entry, cover: index == 0 && originalCover == nil) else { continue }
             let key = NASComicPaths.key(entry.path, fingerprint: try configuration().fingerprint)
             if let info = preview.info {
                 if index == 0 { result = info.copy(into: result) }
@@ -85,6 +114,7 @@ extension NASComicManager {
                 result.cover = try previewDirectory().appendingPathComponent(cover).absoluteString
             }
         }
+        if let originalCover { result.cover = originalCover.absoluteString }
         if knownExplicit { result.contentRating = .nsfw }
         result.chapters = chapters
         if result.description?.isEmpty != false {

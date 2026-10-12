@@ -29,6 +29,7 @@ final class NASComicClient: NSObject, URLSessionDownloadDelegate, @unchecked Sen
         session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
     }
     func close() { session.invalidateAndCancel() }
+    func finish() { session.finishTasksAndInvalidate() }
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {}
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
                     totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
@@ -143,6 +144,31 @@ final class NASComicClient: NSObject, URLSessionDownloadDelegate, @unchecked Sen
         request.setValue(etag, forHTTPHeaderField: "If-Match")
         let (_, response) = try await router.send(request) { try await self.session.data(for: $0) }
         try check(response, allowed: [200, 204])
+    }
+
+    /// Reversible move of one selected folder; never recursively deletes its contents.
+    func trashFolder(_ path: String) async throws {
+        guard !path.isEmpty, !path.split(separator: "/").contains(where: { $0.hasPrefix(".") }) else {
+            throw NASSyncError.invalidAddress
+        }
+        _ = try await list(path) // Verify it is an existing collection beneath the configured root.
+        try await ensureFolder(".aidokut-trash")
+        let destination = ".aidokut-trash/" + UUID().uuidString + "-" + (path as NSString).lastPathComponent
+        var move = try request("MOVE", path: path)
+        move.url = move.url?.appendingPathComponent("", isDirectory: true)
+        move.setValue(try NASComicPaths.url(destination, root: root).absoluteString, forHTTPHeaderField: "Destination")
+        move.setValue("F", forHTTPHeaderField: "Overwrite")
+        let (_, response) = try await router.send(move) { try await self.session.data(for: $0) }
+        try check(response, allowed: [201, 204])
+    }
+
+    func writeCover(_ data: Data, folder: String) async throws {
+        guard !data.isEmpty, data.count <= 2 * 1024 * 1024 else { throw NASComicError.tooLarge }
+        var put = try request("PUT", path: folder + "/.aidokut-cover.jpg")
+        put.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
+        put.httpBody = data
+        let (_, response) = try await router.send(put) { try await self.session.data(for: $0) }
+        try check(response, allowed: [200, 201, 204])
     }
 
     func readLink(_ path: String) async throws -> Data? {

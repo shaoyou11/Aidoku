@@ -109,8 +109,7 @@ extension NASComicManager {
               let page = try? JSONDecoder().decode(NASOnlinePage.self, from: data) else { throw NASComicError.invalidArchive }
         let config = try configuration()
         guard config.fingerprint == page.fingerprint else { throw NASComicError.wrongConnection }
-        let client = try NASComicClient(connection: config.connection, root: config.root)
-        defer { client.close() }
+        let client = try readingClient(config)
         return try await archiveData(page.page, archive: page.archive, client: client)
     }
     func archiveData(_ record: NASZIPEntry, archive: NASComicEntry, client: NASComicClient) async throws -> Data {
@@ -118,7 +117,11 @@ extension NASComicManager {
         guard NASZIPIndex.u32(header, 0) == 0x04034b50 else { throw NASComicError.invalidArchive }
         let length = Int64(30 + Int(NASZIPIndex.u16(header, 26)) + Int(NASZIPIndex.u16(header, 28))) + record.compressedSize
         let local = try await client.range(archive, start: record.offset, count: length)
-        return try Self.decodeOnlinePage(local, entry: record)
+        // ZIP inflation and CRC validation must not interrupt scrolling on the main actor.
+        return try await Task.detached(priority: .userInitiated) {
+            try Task.checkCancellation()
+            return try Self.decodeOnlinePage(local, entry: record)
+        }.value
     }
     nonisolated static func decodeOnlinePage(_ local: Data, entry: NASZIPEntry) throws -> Data {
         let zip = try NASZIPIndex.singleArchive(local: local, entry: entry)

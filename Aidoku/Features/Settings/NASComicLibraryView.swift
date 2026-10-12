@@ -3,6 +3,8 @@ import SwiftUI
 
 struct NASComicLibraryView: View {
     var folder = ""
+    @Environment(\.dismiss) private var dismiss
+    @State private var trashConfirmation: String?
     @ObservedObject private var privacy = PrivacyDisplayStore.shared
     @ObservedObject private var manager = NASComicManager.shared
     @State private var entries: [NASComicEntry] = []
@@ -101,17 +103,31 @@ struct NASComicLibraryView: View {
                     bookHeader(book, expanded: true)
                 } header: { Text("漫画详情") }
             }
+            if !folder.isEmpty {
+                Section {
+                    Button(role: .destructive) { trashConfirmation = folder } label: {
+                        Label("整本移到 NAS 回收站", systemImage: "trash")
+                    }.disabled(interacting)
+                } footer: {
+                    Text("包含此文件夹内所有章节；也可移走空文件夹。不会删除手机书架和原图源漫画。")
+                }
+            }
             Section {
                 if loading { ProgressView("正在读取目录…") }
                 if loadingDetails { ProgressView("正在读取封面与详情…").font(.footnote) }
                 ForEach(visible) { entry in
                     if entry.isDirectory {
-                        NavigationLink(destination: NASComicLibraryView(folder: entry.path)) {
-                            if let preview = previews[entry.path] {
-                                bookHeader(preview, expanded: false)
-                            } else {
-                                Label(entry.name, systemImage: "folder")
+                        VStack(alignment: .leading, spacing: 12) {
+                            NavigationLink(destination: NASComicLibraryView(folder: entry.path)) {
+                                if let preview = previews[entry.path] {
+                                    bookHeader(preview, expanded: false)
+                                } else {
+                                    Label(entry.name, systemImage: "folder")
+                                }
                             }
+                            Button(role: .destructive) { trashConfirmation = entry.path } label: {
+                                Label("移到 NAS 回收站", systemImage: "trash")
+                            }.font(.subheadline).buttonStyle(.borderless)
                         }.disabled(interacting)
                     } else {
                         VStack(alignment: .leading, spacing: 12) {
@@ -174,6 +190,22 @@ struct NASComicLibraryView: View {
             }
             Button("取消", role: .cancel) { cacheConfirmation = nil }
         } message: { Text("此 NAS 不支持 Range 分段读取，或压缩格式不支持在线解码。只有确认后才下载整章。") }
+        .alert("移到 NAS 回收站？", isPresented: Binding(get: { trashConfirmation != nil }, set: { if !$0 { trashConfirmation = nil } })) {
+            Button("移到回收站", role: .destructive) {
+                if let target = trashConfirmation {
+                    Task {
+                        do {
+                            try await manager.trashManga(folder: target)
+                            if target == folder { dismiss() } else { await load() }
+                        } catch { message = NASConnection.message(for: error) }
+                    }
+                }
+                trashConfirmation = nil
+            }
+            Button("取消", role: .cancel) { trashConfirmation = nil }
+        } message: {
+            Text("将“\(((trashConfirmation ?? "") as NSString).lastPathComponent)”及其章节移出漫画库。文件保留在 NAS 的 .aidokut-trash 目录，仍占用空间；可在 NAS 文件管理器中恢复或永久删除。")
+        }
         .alert("删除 NAS 章节？", isPresented: Binding(get: { deleteConfirmation != nil }, set: { if !$0 { deleteConfirmation = nil } })) {
             Button("删除此章", role: .destructive) {
                 if let entry = deleteConfirmation {

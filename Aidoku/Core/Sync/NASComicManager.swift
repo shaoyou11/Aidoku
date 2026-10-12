@@ -13,6 +13,19 @@ final class NASComicManager: ObservableObject {
     @Published private(set) var lastUpload: NASComicUploadSummary?
     private var transfer: Task<Void, Never>?
     private var activeClient: NASComicClient?
+    private var readerClient: NASComicClient?
+    private var readerConnection: NASConnection?
+    private var readerRoot: URL?
+    private var readerStarted = Date.distantPast
+    // Reuse sockets and a successful fallback for a reading session. Retry the primary periodically.
+    func readingClient(_ config: Configuration) throws -> NASComicClient {
+        if let readerClient, readerConnection == config.connection, readerRoot == config.root,
+           Date().timeIntervalSince(readerStarted) < 300 { return readerClient }
+        readerClient?.finish()
+        let next = try NASComicClient(connection: config.connection, root: config.root)
+        readerClient = next; readerConnection = config.connection; readerRoot = config.root; readerStarted = Date()
+        return next
+    }
     private let cacheLimit: Int64 = 2 * 1024 * 1024 * 1024
 
     private init() {
@@ -206,6 +219,9 @@ final class NASComicManager: ObservableObject {
                         updateUpload { $0.removedLocal = ($0.removedLocal ?? 0) + 1 }
                     }
                 }
+                if let cover = await bookCover(folder: folder), let bytes = try? Data(contentsOf: cover) {
+                    try? await client.writeCover(bytes, folder: folder)
+                }
                 status = "上传并校验完成：\(uploaded) 章，同名跳过 \(skipped) 章，失败 \(failed) 章 · " + client.routeLabel
                 updateUpload { $0.state = .completed }
                 _ = try? await entries(folder)
@@ -219,6 +235,31 @@ final class NASComicManager: ObservableObject {
             }
         }
     }
+    func trashManga(folder: String) async throws {
+        guard !busy, !folder.isEmpty else { throw NASComicError.busy }
+        let config = try configuration()
+        let client = try client(config)
+        busy = true; status = "正在将漫画移到 NAS 回收站…"
+        defer { busy = false; client.close() }
+        try await client.trashFolder(folder)
+        // Invalidate this device's associations; other devices resolve the old path as absent.
+        for (key, value) in UserDefaults.standard.dictionaryRepresentation() where key.hasPrefix("NASComics.link.") {
+            guard let bytes = value as? Data, var link = try? JSONDecoder().decode(NASComicLink.self, from: bytes),
+                  link.path.hasPrefix(folder + "/"),
+                  key == "NASComics.link." + NASComicPaths.hash(config.fingerprint + Self.linkPath(source: link.source, manga: link.manga, chapter: link.chapter)) else { continue }
+            link.deleted = true
+            UserDefaults.standard.set(try JSONEncoder().encode(link), forKey: key)
+        }
+        let listing = try listingURL(folder, config: config)
+        try JSONEncoder().encode([NASComicEntry]()).write(to: listing, options: .atomic)
+        let parent = (folder as NSString).deletingLastPathComponent
+        let parentListing = try listingURL(parent, config: config)
+        if let data = try? Data(contentsOf: parentListing), let old = try? JSONDecoder().decode([NASComicEntry].self, from: data) {
+            try JSONEncoder().encode(old.filter { $0.path != folder }).write(to: parentListing, options: .atomic)
+        }
+        status = "已移到 NAS 回收站；可在 NAS 的 .aidokut-trash 文件夹恢复。"
+    }
+
     func deleteChapter(_ entry: NASComicEntry) async throws {
         guard !busy, !entry.isDirectory else { throw NASComicError.busy }
         let config = try configuration()
