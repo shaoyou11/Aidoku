@@ -123,13 +123,14 @@ struct DownloadsView: View {
 
 private struct DownloadedMangaRow: View {
     let manga: DownloadedMangaInfo
+    @State private var localCover: String?
 
     var body: some View {
         HStack(spacing: 12) {
             // Manga cover or placeholder matching history page style
             MangaCoverView(
                 source: SourceManager.shared.store.source(for: manga.sourceId),
-                coverImage: manga.coverUrl ?? "",
+                coverImage: localCover ?? manga.coverUrl ?? "",
                 width: 56,
                 height: 56 * 3/2
             )
@@ -159,6 +160,9 @@ private struct DownloadedMangaRow: View {
             Spacer()
         }
         .contentShape(Rectangle())
+        .task(id: manga.id) {
+            localCover = await DownloadManager.shared.downloadedDetails(manga).cover
+        }
     }
 
     private func formatMangaSubtitle() -> String {
