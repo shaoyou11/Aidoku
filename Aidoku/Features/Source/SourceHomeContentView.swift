@@ -178,7 +178,7 @@ struct SourceHomeContentView: View {
     }
 
 
-    @ContentBuilder
+    @ViewBuilder
     private func scrollContent(containerWidth: CGFloat) -> some View {
         if loading {
             // loading skeleton
@@ -226,7 +226,7 @@ struct SourceHomeContentView: View {
         }
     }
 
-    @ContentBuilder
+    @ViewBuilder
     private func loadingView(width: CGFloat) -> some View {
         Group {
             if listingSelection == 0 && source.features.providesHome {
@@ -242,7 +242,7 @@ struct SourceHomeContentView: View {
         }
     }
 
-    @ContentBuilder
+    @ViewBuilder
     private func homeView(for home: Home, partial: Bool) -> some View {
         let home = privacy.filtered(home, source: source)
         VStack(spacing: 24) {
