@@ -20,6 +20,19 @@ class LibraryViewController: OldMangaCollectionViewController {
         titleKey: "DOWNLOAD_QUEUE",
         sharesBackground: false
     )
+    private lazy var nasLibraryButton: UIBarButtonItem = {
+        let button = UIBarButtonItem(image: UIImage(systemName: "externaldrive"), style: .plain, target: self, action: #selector(openNASLibrary))
+        button.accessibilityLabel = "NAS 漫画库"
+        button.accessibilityIdentifier = "library.nas"
+        return button
+    }()
+    @objc private func openNASLibrary() {
+        let controller = UIHostingController(rootView: NASComicLibrarySheet())
+        controller.modalPresentationStyle = .pageSheet
+        if let sheet = controller.sheetPresentationController { sheet.detents = [.large()] }
+        present(controller, animated: true)
+    }
+
     private lazy var lockBarButton = makeBarButton(
         systemName: locked ? "lock" : "lock.open",
         action: #selector(performToggleLock),
@@ -555,7 +568,7 @@ extension LibraryViewController {
             }
             items.append(mangaUpdatesButton)
             navigationItem.rightBarButtonItems = items
-            navigationItem.leftBarButtonItem = nil
+            navigationItem.leftBarButtonItem = nasLibraryButton
             Task { @MainActor in
                 if await DownloadManager.shared.hasQueuedDownloads() {
                     let index = (navigationItem.rightBarButtonItems?.count ?? 1) - 1

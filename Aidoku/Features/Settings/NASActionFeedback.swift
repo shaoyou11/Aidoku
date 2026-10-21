@@ -26,7 +26,7 @@ struct NASActionLabel: View {
             Text(title)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(minHeight: 32, alignment: .leading)
+        .frame(minHeight: 44, alignment: .leading)
         .accessibilityElement(children: .combine)
     }
 }
@@ -38,25 +38,28 @@ struct NASConnectionStatusSection: View {
     var body: some View {
         Section {
             if let snapshot = connectionStatus.snapshot {
-                Label(snapshot.family + " · " + snapshot.route, systemImage: "network")
-                    .font(.subheadline.weight(.medium))
-                Text(snapshot.address)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .privacySensitive()
-                    .fixedSize(horizontal: false, vertical: true)
-                if let remoteAddress = snapshot.remoteAddress {
-                    Text("实际连接 IP：" + remoteAddress)
+                DisclosureGroup {
+                    Text(snapshot.address)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                         .privacySensitive()
                         .fixedSize(horizontal: false, vertical: true)
+                    if let remoteAddress = snapshot.remoteAddress {
+                        Text("实际连接 IP：" + remoteAddress)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .privacySensitive()
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text("确认时间：" + snapshot.connectedAt.formatted(date: .abbreviated, time: .standard))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } label: {
+                    Label(snapshot.family + " · " + snapshot.route, systemImage: "network")
+                        .font(.subheadline.weight(.medium))
                 }
-                Text("确认时间：" + snapshot.connectedAt.formatted(date: .abbreviated, time: .standard))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 if let failure = connectionStatus.lastFailureAt, failure > snapshot.connectedAt {
                     Label("最近请求失败，上方保留上次成功连接的信息。", systemImage: "exclamationmark.circle")
                         .font(.footnote)
