@@ -181,9 +181,11 @@ struct HistoryView: View {
     }
 
     func cellView(entry: HistoryEntry) -> some View {
+        let source = viewModel.sourceCache[entry.chapterId.sourceKey]
         let manga = viewModel.mangaCache[entry.chapterId.mangaIdentifier]
         return HistoryEntryCell(
             entry: entry,
+            source: source,
             manga: manga,
             chapter: viewModel.chapterCache[entry.chapterId]
         ) {
@@ -352,6 +354,7 @@ struct HistoryView: View {
 private struct HistoryEntryCell: View, @MainActor Equatable {
     let entry: HistoryEntry
 
+    let source: AidokuRunner.Source?
     let manga: AidokuRunner.Manga?
     let chapter: AidokuRunner.Chapter?
 
@@ -365,6 +368,7 @@ private struct HistoryEntryCell: View, @MainActor Equatable {
         } label: {
             HStack(spacing: 12) {
                 MangaCoverView(
+                    source: source,
                     coverImage: manga?.cover ?? "",
                     width: Self.coverImageWidth,
                     height: Self.coverImageWidth * 3/2,
