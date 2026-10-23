@@ -158,7 +158,7 @@ struct NASComicLibraryView: View {
                                     }
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(chapterTitle(entry)).foregroundStyle(.primary).lineLimit(2)
-                                        Text(openingID == entry.path ? "正在打开章节…" : (readingStates[entry.path]?.label ?? "未读") + " · " + (manager.isCached(entry) ? "手机缓存" : "NAS 在线") + " · " + ByteCountFormatter.string(fromByteCount: entry.size, countStyle: .file))
+                                        Text(chapterSubtitle(entry))
                                             .font(.caption).foregroundStyle(.secondary)
                                     }
                                 }.frame(minHeight: 44, alignment: .leading)
@@ -305,6 +305,13 @@ struct NASComicLibraryView: View {
             SwiftUIReaderNavigationController(source: SourceManager.shared.store.source(for: NASSourceRunner.sourceKey), manga: item.manga, chapter: item.chapter, startPage: item.startPage)
                 .ignoresSafeArea()
         }
+    }
+    private func chapterSubtitle(_ entry: NASComicEntry) -> String {
+        if openingID == entry.path { return "正在打开章节…" }
+        let progress = readingStates[entry.path]?.label ?? "未读"
+        let location = manager.isCached(entry) ? "手机缓存" : "NAS 在线"
+        let size = ByteCountFormatter.string(fromByteCount: entry.size, countStyle: .file)
+        return [progress, location, size].joined(separator: " · ")
     }
     private func chapterTitle(_ entry: NASComicEntry) -> String {
         guard let fingerprint = try? manager.configuration().fingerprint else { return entry.name }
