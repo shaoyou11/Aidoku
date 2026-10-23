@@ -33,6 +33,7 @@ struct NASActionLabel: View {
 
 /// Transport-confirmed information; it deliberately does not claim ongoing connectivity.
 struct NASConnectionStatusSection: View {
+    var compact = false
     @ObservedObject private var connectionStatus = NASConnectionStatus.shared
 
     var body: some View {
@@ -57,10 +58,10 @@ struct NASConnectionStatusSection: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } label: {
-                    Label(snapshot.family + " · " + snapshot.route, systemImage: "network")
+                    Label((connectionStatus.lastFailureAt.map { $0 > snapshot.connectedAt } == true ? "最近请求失败 · " : "最近成功 · ") + snapshot.family + " · " + snapshot.route, systemImage: "network")
                         .font(.subheadline.weight(.medium))
                 }
-                if let failure = connectionStatus.lastFailureAt, failure > snapshot.connectedAt {
+                if !compact, let failure = connectionStatus.lastFailureAt, failure > snapshot.connectedAt {
                     Label("最近请求失败，上方保留上次成功连接的信息。", systemImage: "exclamationmark.circle")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -70,8 +71,8 @@ struct NASConnectionStatusSection: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-        } header: { Text("最近成功连接") } footer: {
-            Text("根据实际网络请求显示线路，读取手机缓存不会更新此记录。")
+        } header: { if !compact { Text("最近成功连接") } } footer: {
+            if !compact { Text("根据实际网络请求显示线路，读取手机缓存不会更新此记录。") }
         }
     }
 }

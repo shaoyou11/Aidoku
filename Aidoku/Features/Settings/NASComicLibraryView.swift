@@ -27,10 +27,37 @@ struct NASComicLibraryView: View {
     @State private var book: AidokuRunner.Manga?
     @State private var previews: [String: AidokuRunner.Manga] = [:]
     @State private var loadingDetails = false
+    @State private var readingStates: [String: NASComicManager.ReadingState] = [:]
+    @State private var cachedFolders: Set<String> = []
+    @State private var children: [String: [NASComicEntry]] = [:]
+    @State private var loadedFingerprint: String?
+    @State private var filter: ReadingFilter = .all
+    @State private var removeCacheConfirmation: NASComicEntry?
+    private enum ReadingFilter: String, CaseIterable { case all = "全部", recent = "最近阅读", unread = "未读", cached = "已缓存" }
+    private var continuation: NASComicManager.ReadingState? {
+        readingStates.values.filter {
+            !$0.completed && $0.page > 0 && manager.isComicVisible(path: $0.path, isDirectory: false)
+                && (folder.isEmpty || ($0.path as NSString).deletingLastPathComponent == folder)
+        }.max { $0.date < $1.date }
+    }
+    private func matchesFilter(_ entry: NASComicEntry) -> Bool {
+        switch filter {
+        case .all: return true
+        case .cached: return entry.isDirectory ? cachedFolders.contains(where: { $0 == entry.path || $0.hasPrefix(entry.path + "/") }) : manager.isCached(entry)
+        case .recent: return entry.isDirectory ? readingStates.keys.contains { $0.hasPrefix(entry.path + "/") } : readingStates[entry.path] != nil
+        case .unread:
+            if entry.isDirectory {
+                let chapters = children[entry.path]?.filter { !$0.isDirectory } ?? []
+                return chapters.isEmpty || chapters.contains { readingStates[$0.path]?.completed != true }
+            }
+            return readingStates[entry.path]?.completed != true
+        }
+    }
     private struct ReadingItem: Identifiable {
         let id = UUID()
         let manga: AidokuRunner.Manga
         let chapter: AidokuRunner.Chapter
+        let startPage: Int?
     }
     private var interacting: Bool { manager.busy || loading || refreshingLinks || openingID != nil }
     private var visible: [NASComicEntry] {
@@ -38,63 +65,44 @@ struct NASComicLibraryView: View {
         return entries.filter {
             manager.isComicVisible(path: $0.path, isDirectory: $0.isDirectory)
                 && previews[$0.path].map({ privacy.allows($0) }) != false
+                && matchesFilter($0)
                 && (query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) || previews[$0.path]?.title.localizedCaseInsensitiveContains(query) == true)
+        }.sorted { left, right in
+            guard filter == .recent else { return false }
+            func date(_ entry: NASComicEntry) -> Date {
+                if !entry.isDirectory { return readingStates[entry.path]?.date ?? .distantPast }
+                return readingStates.values.filter { $0.path.hasPrefix(entry.path + "/") }.map(\.date).max() ?? .distantPast
+            }
+            return date(left) > date(right)
         }
     }
     var body: some View {
         List {
-            if folder.isEmpty {
+            if let recent = continuation {
                 Section {
-                    DisclosureGroup(isExpanded: $showManagement) {
-                        Text((try? manager.configuration().root.path) ?? "请先在 NAS 同步中保存连接")
-                            .font(.footnote).foregroundStyle(.secondary)
-                        Button {
-                            do {
-                                let config = try manager.configuration()
-                                // Start from the saved sync location so an absent default comics folder does not block browsing.
-                                folderSelection = FolderSelection(connection: config.connection)
-                            } catch { message = NASConnection.message(for: error) }
-                        } label: {
-                            NASActionLabel(title: "选择漫画文件夹", systemImage: "folder")
-                        }.disabled(interacting)
-                        Button {
-                            refreshingLinks = true
-                            message = nil
-                            notice = nil
-                            Task {
-                                defer { refreshingLinks = false }
-                                do {
-                                    let count = try await manager.refreshUploadedLinks()
-                                    notice = "已关联 \(count) 个章节。原漫画选择“NAS 优先”后，仅已上传章节从 NAS 读取，其余章节仍使用原有下载或图源。"
-                                } catch { message = NASConnection.message(for: error) }
-                            }
-                        } label: {
-                            NASActionLabel(title: refreshingLinks ? "正在关联章节…" : "刷新已上传章节关联", systemImage: "link", busy: refreshingLinks)
-                        }.disabled(interacting)
-                        Button { Task { await manager.createLibrary(); await load() } } label: {
-                            NASActionLabel(title: "准备默认漫画目录", systemImage: "folder.badge.plus", busy: manager.busy)
-                        }.disabled(interacting)
-                        NavigationLink("管理手机章节缓存") { NASComicCacheView() }
-                        NavigationLink("NAS 连接设置") { NASSyncView() }
-                        Text("阅读缓存 " + ByteCountFormatter.string(fromByteCount: manager.cacheBytes, countStyle: .file) + " / 2 GB")
-                            .font(.footnote).foregroundStyle(.secondary)
-                        Text("沿用 NAS 同步的连接及备用地址。可选已有 CBZ / ZIP 文件夹；上传入口在“下载 → 漫画 → 菜单”。默认目录为同步文件夹下的 AidokuT-Comics。")
-                            .font(.footnote).foregroundStyle(.secondary)
-                    } label: {
-                        Label("漫画库管理", systemImage: "slider.horizontal.3")
-                    }
+                    Button { Task { await continueReading(recent) } } label: {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Label("继续阅读", systemImage: "book.fill").font(.headline)
+                            Text((recent.path as NSString).lastPathComponent).lineLimit(2).foregroundStyle(.primary)
+                            Text(recent.label + " · " + ((recent.path as NSString).deletingLastPathComponent)).font(.caption).foregroundStyle(.secondary)
+                        }.padding(.vertical, 4)
+                    }.disabled(interacting)
                 }
             }
-            Section {
-                Text(manager.status).font(.footnote).foregroundStyle(.secondary)
-                if manager.busy {
+            NASConnectionStatusSection(compact: true)
+            if manager.cachedListingPaths.contains(folder) {
+                Section {
+                    Label("网络读取失败，显示上次目录；手机缓存仍可阅读。", systemImage: "exclamationmark.circle").font(.footnote)
+                    Button("重新读取目录") { Task { await load() } }.disabled(interacting)
+                }
+            }
+            if manager.busy {
+                Section {
+                    Text(manager.status).font(.footnote)
                     if let progress = manager.progress { ProgressView(value: progress) } else { ProgressView() }
                     Button("取消传输", role: .cancel) { manager.cancel() }
                 }
-            } footer: {
-                Text("点章节在线阅读；长按或左滑管理缓存及 NAS 文件。")
             }
-            NASConnectionStatusSection()
             if let notice {
                 Section { Label(notice, systemImage: "checkmark.circle").font(.footnote).foregroundStyle(.secondary) }
             }
@@ -109,14 +117,10 @@ struct NASComicLibraryView: View {
                     bookHeader(book, expanded: true)
                 } header: { Text("漫画详情") }
             }
-            if !folder.isEmpty {
-                Section {
-                    Button(role: .destructive) { trashConfirmation = folder } label: {
-                        Label("整本移到 NAS 回收站", systemImage: "trash")
-                    }.disabled(interacting)
-                } footer: {
-                    Text("包含此文件夹内所有章节；也可移走空文件夹。不会删除手机书架和原图源漫画。")
-                }
+            Section {
+                Picker("筛选", selection: $filter) {
+                    ForEach(ReadingFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                }.pickerStyle(.menu)
             }
             Section {
                 if loading { ProgressView("正在读取目录…") }
@@ -154,7 +158,7 @@ struct NASComicLibraryView: View {
                                     }
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(chapterTitle(entry)).foregroundStyle(.primary).lineLimit(2)
-                                        Text(openingID == entry.path ? "正在打开章节…" : ByteCountFormatter.string(fromByteCount: entry.size, countStyle: .file) + (manager.isCached(entry) ? " · 已缓存" : " · NAS"))
+                                        Text(openingID == entry.path ? "正在打开章节…" : (readingStates[entry.path]?.label ?? "未读") + " · " + (manager.isCached(entry) ? "手机缓存" : "NAS 在线") + " · " + ByteCountFormatter.string(fromByteCount: entry.size, countStyle: .file))
                                             .font(.caption).foregroundStyle(.secondary)
                                     }
                                 }.frame(minHeight: 44, alignment: .leading)
@@ -169,31 +173,87 @@ struct NASComicLibraryView: View {
                             Button("删除 NAS 章节", role: .destructive) { deleteConfirmation = entry }.disabled(interacting)
                             if manager.isCached(entry) {
                                 Button("移除缓存", role: .destructive) {
-                                    do { try manager.removeCache(entry) } catch { message = NASConnection.message(for: error) }
+                                    removeCacheConfirmation = entry
                                 }.disabled(manager.busy)
                             }
                         }
                     }
                 }
-                if !loading && visible.isEmpty && message == nil { Text("此处没有 CBZ / ZIP 漫画或子文件夹").foregroundStyle(.secondary) }
-            } header: { Text("文件夹与章节") }
+                if !loading && visible.isEmpty && message == nil { Text(filter == .all && query.isEmpty ? "此处没有 CBZ / ZIP 漫画或子文件夹" : "没有符合筛选条件的漫画或章节").foregroundStyle(.secondary) }
+            } header: { Text("文件夹与章节") } footer: { Text("此页内容来自 NAS；已缓存章节优先读取手机。原图源漫画可从书架阅读，并在阅读设置中选择来源。") }
         }
         .buttonStyle(NASActionButtonStyle())
         .navigationTitle(folder.isEmpty ? "NAS 漫画库" : (folder as NSString).lastPathComponent)
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $query, prompt: "搜索当前目录")
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button { showManagement = true } label: { Image(systemName: "slider.horizontal.3") }.accessibilityLabel("漫画库管理")
+            }
+        }
+        .sheet(isPresented: $showManagement) {
+            NavigationView {
+                Form {
+                    Section {
+                        Text((try? manager.configuration().root.path) ?? "请先在 NAS 同步中保存连接")
+                            .font(.footnote).foregroundStyle(.secondary).privacySensitive()
+                        Button {
+                            do {
+                                let config = try manager.configuration()
+                                // Start from the saved sync location so an absent default comics folder does not block browsing.
+                                folderSelection = FolderSelection(connection: config.connection)
+                            } catch { message = NASConnection.message(for: error) }
+                        } label: {
+                            NASActionLabel(title: "选择漫画文件夹", systemImage: "folder")
+                        }.disabled(interacting || !folder.isEmpty)
+                        Button {
+                            refreshingLinks = true
+                            message = nil
+                            notice = nil
+                            Task {
+                                defer { refreshingLinks = false }
+                                do {
+                                    let count = try await manager.refreshUploadedLinks()
+                                    notice = "已关联 \(count) 个章节。原漫画选择“NAS 优先”后，仅已上传章节从 NAS 读取，其余章节仍使用原有下载或图源。"
+                                } catch { message = NASConnection.message(for: error) }
+                            }
+                        } label: {
+                            NASActionLabel(title: refreshingLinks ? "正在关联章节…" : "刷新已上传章节关联", systemImage: "link", busy: refreshingLinks)
+                        }.disabled(interacting)
+                        Button { Task { await manager.createLibrary(); await load() } } label: {
+                            NASActionLabel(title: "准备默认漫画目录", systemImage: "folder.badge.plus", busy: manager.busy)
+                        }.disabled(interacting)
+                        NavigationLink("管理手机章节缓存") { NASComicCacheView() }
+                        NavigationLink("NAS 连接设置") { NASSyncView() }
+                        Text("阅读缓存 " + ByteCountFormatter.string(fromByteCount: manager.cacheBytes, countStyle: .binary) + " / " + ByteCountFormatter.string(fromByteCount: manager.cacheLimit, countStyle: .binary))
+                            .font(.footnote).foregroundStyle(.secondary)
+                        Text("沿用 NAS 同步的连接及备用地址。可选已有 CBZ / ZIP 文件夹；上传入口在“下载 → 漫画 → 菜单”。默认目录为同步文件夹下的 AidokuT-Comics。")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    if !folder.isEmpty {
+                        Section {
+                            Button("整本移到 NAS 回收站", role: .destructive) { showManagement = false; trashConfirmation = folder }.disabled(interacting)
+                        } footer: { Text("包含当前文件夹的所有章节，不会删除手机书架和原图源漫画。") }
+                    }
+                }
+                .navigationTitle("漫画库管理").navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { showManagement = false } } }
+                .sheet(item: $folderSelection) { selection in
+                    NASFolderPicker(connection: selection.connection, title: "选择漫画文件夹") { url in
+                        do { try manager.selectFolder(url); Task { await load() } }
+                        catch { message = NASConnection.message(for: error) }
+                    }
+                }
+            }.navigationViewStyle(.stack)
+        }
         .refreshable { await load() }
+        .onChange(of: manager.cacheBytes) { _ in cachedFolders = Set(manager.cacheItems().map(\.manga)) }
+        .onReceive(NotificationCenter.default.publisher(for: .privacyDisplayChanged)) { _ in cachedFolders = Set(manager.cacheItems().map(\.manga)) }
         .task {
             showManagement = (try? manager.configuration()) == nil
             await manager.enableSource()
             manager.refreshCacheSize()
             await load()
-        }
-        .sheet(item: $folderSelection) { selection in
-            NASFolderPicker(connection: selection.connection, title: "选择漫画文件夹") { url in
-                do { try manager.selectFolder(url); Task { await load() } }
-                catch { message = NASConnection.message(for: error) }
-            }
         }
         .alert("此章节需要整章缓存", isPresented: Binding(get: { cacheConfirmation != nil }, set: { if !$0 { cacheConfirmation = nil } })) {
             Button("缓存整章后阅读") {
@@ -232,8 +292,17 @@ struct NASComicLibraryView: View {
         } message: {
             Text("仅删除 NAS 上的“\(deleteConfirmation?.name ?? "")”。若手机原下载也已删除，需要从原图源重新下载才能恢复。")
         }
-        .fullScreenCover(item: $reader) { item in
-            SwiftUIReaderNavigationController(source: SourceManager.shared.store.source(for: NASSourceRunner.sourceKey), manga: item.manga, chapter: item.chapter)
+        .alert("移除手机缓存？", isPresented: Binding(get: { removeCacheConfirmation != nil }, set: { if !$0 { removeCacheConfirmation = nil } })) {
+            Button("移除此章缓存", role: .destructive) {
+                if let entry = removeCacheConfirmation {
+                    do { try manager.removeCache(entry) } catch { message = NASConnection.message(for: error) }
+                }
+                removeCacheConfirmation = nil
+            }
+            Button("取消", role: .cancel) { removeCacheConfirmation = nil }
+        } message: { Text("仅移除“\(removeCacheConfirmation?.name ?? "")”的手机缓存。其他离线章节和 NAS 原文件保留。") }
+        .fullScreenCover(item: $reader, onDismiss: { Task { readingStates = await manager.readingStates() } }) { item in
+            SwiftUIReaderNavigationController(source: SourceManager.shared.store.source(for: NASSourceRunner.sourceKey), manga: item.manga, chapter: item.chapter, startPage: item.startPage)
                 .ignoresSafeArea()
         }
     }
@@ -263,9 +332,16 @@ struct NASComicLibraryView: View {
         let id = UUID(); loadID = id; loading = true; message = nil
         defer { if loadID == id { loading = false } }
         do {
+            let fingerprint = try manager.configuration().fingerprint
+            if loadedFingerprint != fingerprint {
+                loadedFingerprint = fingerprint; previews = [:]; children = [:]; entries = []; book = nil; readingStates = [:]
+            }
             let result = try await manager.entries(folder)
             guard loadID == id, !Task.isCancelled else { return }
             entries = result
+            readingStates = await manager.readingStates()
+            cachedFolders = Set(manager.cacheItems().map(\.manga))
+            guard loadID == id, !Task.isCancelled else { return }
             loading = false
             loadingDetails = true
             defer { if loadID == id { loadingDetails = false } }
@@ -284,6 +360,7 @@ struct NASComicLibraryView: View {
         do {
             let children = try await manager.entries(entry.path, refresh: false)
             guard loadID == id, !Task.isCancelled else { return }
+            self.children[entry.path] = children
             let details = try await manager.detailedManga(folder: entry.path, entries: children, allChapters: false)
             guard loadID == id, !Task.isCancelled else { return }
             previews[entry.path] = details
@@ -298,13 +375,29 @@ struct NASComicLibraryView: View {
         message = nil
         do {
             _ = try await manager.onlinePages(entry)
-            let manga = try book ?? manager.manga(folder: folder, entries: entries)
+            let parent = (entry.path as NSString).deletingLastPathComponent
+            let manga: AidokuRunner.Manga
+            if parent == folder { manga = try book ?? manager.manga(folder: folder, entries: entries) }
+            else {
+                let siblings = try await manager.entries(parent, refresh: false)
+                manga = try await manager.detailedManga(folder: parent, entries: siblings, allChapters: false)
+            }
             guard privacy.allows(manga) else { return }
             let key = NASComicPaths.key(entry.path, fingerprint: try manager.configuration().fingerprint)
             guard let chapter = manga.chapters?.first(where: { $0.key == key }) else { throw NASComicError.invalidArchive }
-            reader = .init(manga: manga, chapter: chapter)
+            let saved = readingStates[entry.path]
+            reader = .init(manga: manga, chapter: chapter, startPage: saved.flatMap { !$0.completed && $0.page > 0 ? $0.page : nil })
         } catch NASComicError.requiresWholeArchive { cacheConfirmation = entry }
         catch { message = NASConnection.message(for: error) }
+    }
+    @MainActor private func continueReading(_ state: NASComicManager.ReadingState) async {
+        do {
+            let siblings = try await manager.entries((state.path as NSString).deletingLastPathComponent, refresh: false)
+            guard let entry = siblings.first(where: { $0.path == state.path && !$0.isDirectory }) else {
+                message = "该章节已移动或删除，请刷新目录。"; return
+            }
+            await open(entry)
+        } catch { message = NASConnection.message(for: error) }
     }
     @discardableResult @MainActor private func cache(_ entry: NASComicEntry) async -> Bool {
         do { _ = try await manager.cachedArchive(entry); return true }
@@ -393,35 +486,6 @@ struct NASComicUploadView: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } } }
         }
         .navigationViewStyle(.stack)
-    }
-}
-
-private struct NASComicCacheView: View {
-    @ObservedObject private var manager = NASComicManager.shared
-    @State private var items: [NASComicManager.CacheItem] = []
-    @State private var message: String?
-    var body: some View {
-        List {
-            if let message { Text(message).foregroundStyle(.secondary) }
-            Section {
-                ForEach(items) { item in
-                    HStack {
-                        Text(item.name).lineLimit(2)
-                        Spacer()
-                        Text(ByteCountFormatter.string(fromByteCount: item.size, countStyle: .file)).font(.caption).foregroundStyle(.secondary)
-                    }.swipeActions {
-                        Button("移除缓存", role: .destructive) {
-                            do { try manager.removeCacheFile(item.id); items = manager.cacheItems() }
-                            catch { message = NASConnection.message(for: error) }
-                        }.disabled(manager.busy)
-                    }
-                }
-                if items.isEmpty { Text("没有整章缓存").foregroundStyle(.secondary) }
-            } footer: { Text("左滑移除单章手机缓存。NAS 上的原文件保持不变，下次仍可按页在线阅读。") }
-        }
-        .navigationTitle("章节缓存")
-        .task { items = manager.cacheItems() }
-        .onReceive(NotificationCenter.default.publisher(for: .privacyDisplayChanged)) { _ in items = manager.cacheItems() }
     }
 }
 

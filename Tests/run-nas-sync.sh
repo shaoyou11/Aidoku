@@ -3,6 +3,8 @@ set -eu
 cd "$(dirname "$0")/.."
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 NAS_TEST_DIR=$(mktemp -d /tmp/aidoku-nas-tests.XXXXXX)
+xcrun swiftc Aidoku/Core/Sync/NASComicCachePolicy.swift Aidoku/Core/Sync/NASComicReadingProgress.swift Tests/NASCache/main.swift -o "$NAS_TEST_DIR/cache"
+"$NAS_TEST_DIR/cache"
 NAS_MODEL_PATH="${1:-../Aidoku-build/Build/Products/Release-iphoneos/Aidoku.app/Aidoku.momd/0.9.mom}"
 xcrun swiftc Aidoku/Core/Sync/NASSyncDocument.swift Tests/NASSync/main.swift -o "$NAS_TEST_DIR/merge"
 "$NAS_TEST_DIR/merge"

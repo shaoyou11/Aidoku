@@ -44,9 +44,40 @@ final class TrashServer: URLProtocol {
     }
 }
 
+final class CacheBudgetServer: URLProtocol {
+    static var bytes = 1024
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func stopLoading() {}
+    override func startLoading() {
+        let data = Data(repeating: 65, count: Self.bytes)
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Length": String(data.count)])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+}
+
 @main struct Tests {
     static func expect(_ condition: Bool, _ text: String) { if !condition { fatalError(text) } }
     static func main() async throws {
+        let budgetConfiguration = URLSessionConfiguration.ephemeral
+        budgetConfiguration.protocolClasses = [CacheBudgetServer.self]
+        let budgetConnection = NASConnection(folder: "https://nas.invalid/comics/")
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent("cache-budget-" + UUID().uuidString + ".cbz")
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let limited = try NASComicClient(connection: budgetConnection, root: budgetConnection.folderURL(), configuration: budgetConfiguration, downloadLimit: 512)
+        defer { limited.close() }
+        // Unknown remote length must still obey the real downloaded size, without retaining a file.
+        do {
+            try await limited.download(.init(name: "chapter.cbz", path: "chapter.cbz", isDirectory: false, size: 0, etag: nil), to: destination)
+            fatalError("actual download exceeded cache budget")
+        } catch NASComicError.cacheFull {}
+        expect(!FileManager.default.fileExists(atPath: destination.path), "over-budget partial never becomes retained cache")
+        let fitting = try NASComicClient(connection: budgetConnection, root: budgetConnection.folderURL(), configuration: budgetConfiguration, downloadLimit: 1024)
+        defer { fitting.close() }
+        try await fitting.download(.init(name: "chapter.cbz", path: "chapter.cbz", isDirectory: false, size: 1024, etag: nil), to: destination)
+        expect((try Data(contentsOf: destination)).count == 1024, "exact-budget download remains usable")
         let trashConfig = URLSessionConfiguration.ephemeral
         trashConfig.protocolClasses = [TrashServer.self]
         let trashConnection = NASConnection(folder: "https://nas.invalid/comics/")

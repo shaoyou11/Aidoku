@@ -9,9 +9,12 @@ final class NASComicClient: NSObject, URLSessionDownloadDelegate, @unchecked Sen
     private let router: NASRequestRouter
     private let connectionMetrics: NASConnectionMetrics
     var routeLabel: String { router.routeLabel }
+    private let downloadLimit: Int64
+    private let downloadBudgetLock = NSLock()
+    private var exceededDownloadBudget = false
     private let progress: @Sendable (Int64, Int64) -> Void
 
-    init(connection: NASConnection, root: URL, configuration: URLSessionConfiguration = .ephemeral,
+    init(connection: NASConnection, root: URL, configuration: URLSessionConfiguration = .ephemeral, downloadLimit: Int64 = NASComicClient.maxFileBytes,
          progress: @escaping @Sendable (Int64, Int64) -> Void = { _, _ in }) throws {
         guard NASConnection.sameOrigin(try connection.folderURL(), root), root.user == nil, root.password == nil,
               root.query == nil, root.fragment == nil else { throw NASSyncError.invalidAddress }
@@ -19,6 +22,7 @@ final class NASComicClient: NSObject, URLSessionDownloadDelegate, @unchecked Sen
         self.router = NASRequestRouter(connection: connection)
         self.connectionMetrics = NASConnectionMetrics(connection: connection)
         self.root = root.appendingPathComponent("", isDirectory: true)
+        self.downloadLimit = min(Self.maxFileBytes, max(0, downloadLimit))
         self.progress = progress
         super.init()
         configuration.timeoutIntervalForRequest = 12
@@ -33,7 +37,10 @@ final class NASComicClient: NSObject, URLSessionDownloadDelegate, @unchecked Sen
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {}
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
                     totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-        if totalBytesWritten > Self.maxFileBytes || totalBytesExpectedToWrite > Self.maxFileBytes { downloadTask.cancel() }
+        if totalBytesWritten > downloadLimit || totalBytesExpectedToWrite > downloadLimit {
+            downloadBudgetLock.withLock { exceededDownloadBudget = true }
+            downloadTask.cancel()
+        }
         progress(totalBytesWritten, totalBytesExpectedToWrite)
     }
     func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64,
@@ -221,15 +228,23 @@ final class NASComicClient: NSObject, URLSessionDownloadDelegate, @unchecked Sen
 
     func download(_ entry: NASComicEntry, to destination: URL) async throws {
         guard entry.size <= Self.maxFileBytes else { throw NASComicError.tooLarge }
+        guard entry.size <= downloadLimit else { throw NASComicError.cacheFull }
+        downloadBudgetLock.withLock { exceededDownloadBudget = false }
         var request = try request("GET", path: entry.path)
         if let etag = entry.etag, etag.hasPrefix("\""), etag.hasSuffix("\""), !etag.contains("\n") {
             request.setValue(etag, forHTTPHeaderField: "If-Match")
         }
-        let (file, response) = try await router.send(request) { try await self.session.download(for: $0) }
+        let file: URL
+        let response: URLResponse
+        do { (file, response) = try await router.send(request) { try await self.session.download(for: $0) } }
+        catch {
+            if downloadBudgetLock.withLock({ exceededDownloadBudget }) { throw NASComicError.cacheFull }
+            throw error
+        }
         defer { try? FileManager.default.removeItem(at: file) }
         try check(response, allowed: [200])
         let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-        guard size > 0, size <= Self.maxFileBytes else { throw NASComicError.tooLarge }
+        guard size > 0, size <= downloadLimit else { throw NASComicError.cacheFull }
         guard entry.size == 0 || size == entry.size else { throw NASComicError.invalidArchive }
         try Task.checkCancellation()
         try FileManager.default.moveItem(at: file, to: destination)

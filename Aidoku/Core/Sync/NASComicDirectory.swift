@@ -36,7 +36,7 @@ enum NASComicError: LocalizedError {
         case .requiresWholeArchive: "此 NAS 或压缩格式暂不支持按页在线读取。可选择“缓存整章”后阅读，不会自动下载整章。"
         case .invalidArchive: "不是可阅读的 CBZ / ZIP 漫画，或文件损坏。"
         case .tooLarge: "单章文件超过 1 GB，请拆分后再试。"
-        case .cacheFull: "NAS 阅读缓存已达 2 GB，请在漫画库中移除不需要的章节缓存后重试。"
+        case .cacheFull: "本章超过可用缓存容量，请在“手机章节缓存”中调整容量或选择清理后重试（最高 2 GB）。"
         case .wrongConnection: "此漫画属于另一处 NAS 漫画目录，请切回原来的连接和漫画文件夹。"
         case .exists: "NAS 已有同名章节，本次跳过，不覆盖原文件。"
         case .busy: "另一个漫画传输正在进行，请等待完成或先取消。"

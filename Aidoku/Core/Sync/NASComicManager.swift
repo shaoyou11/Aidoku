@@ -10,6 +10,7 @@ final class NASComicManager: ObservableObject {
     @Published private(set) var status = "优先按页在线阅读，整章离线缓存可选"
     @Published private(set) var progress: Double?
     @Published private(set) var cacheBytes: Int64 = 0
+    @Published private(set) var cachedListingPaths: Set<String> = []
     @Published private(set) var lastUpload: NASComicUploadSummary?
     private var transfer: Task<Void, Never>?
     private var activeClient: NASComicClient?
@@ -26,7 +27,12 @@ final class NASComicManager: ObservableObject {
         readerClient = next; readerConnection = config.connection; readerRoot = config.root; readerStarted = Date()
         return next
     }
-    private let cacheLimit: Int64 = 2 * 1024 * 1024 * 1024
+    var cacheLimit: Int64 { NASComicCachePolicy.limit(savedMB: UserDefaults.standard.integer(forKey: "NASComics.cacheLimitMB")) }
+    func setCacheLimit(_ megabytes: Int) {
+        guard !busy, NASComicCachePolicy.capacitiesMB.contains(megabytes) else { return }
+        objectWillChange.send()
+        UserDefaults.standard.set(megabytes, forKey: "NASComics.cacheLimitMB")
+    }
 
     private init() {
         if let data = UserDefaults.standard.data(forKey: "NASComics.lastUpload"),
@@ -101,11 +107,13 @@ final class NASComicManager: ObservableObject {
             let entries = try await client.list(path)
             try Task.checkCancellation()
             try JSONEncoder().encode(entries).write(to: saved, options: [.atomic, .completeFileProtection])
+            cachedListingPaths.remove(path)
             if !busy { status = "目录已更新 · " + client.routeLabel }
             return entries
         } catch {
             guard !Task.isCancelled, (error as? URLError)?.code != .cancelled else { throw CancellationError() }
             if let data = try? Data(contentsOf: saved), let entries = try? JSONDecoder().decode([NASComicEntry].self, from: data) {
+                cachedListingPaths.insert(path)
                 if !busy { status = "网络读取失败，显示上次目录；已缓存章节仍可阅读。" }
                 return entries
             }
@@ -305,24 +313,43 @@ final class NASComicManager: ObservableObject {
     func removeCache(_ entry: NASComicEntry) throws {
         guard !busy else { throw NASComicError.busy }
         let file = try cacheURL(entry, config: configuration())
-        if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
+        if FileManager.default.fileExists(atPath: file.path) { try removeCacheFile(file) }
         refreshCacheSize()
     }
     struct CacheItem: Identifiable {
         let id: URL
         let name: String
         let size: Int64
+        let manga: String
     }
     func cacheItems() -> [CacheItem] {
         guard let folder = try? directory(.cachesDirectory, name: "NASComicChapters"),
               let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.fileSizeKey]) else { return [] }
-        return files.filter { file in
-            guard file.pathExtension == "cbz" else { return false }
-            if let path = UserDefaults.standard.string(forKey: "NASComics.cachePath." + file.lastPathComponent) { return isComicVisible(path: path, isDirectory: false) }
-            return true
-        }.map { file in
-            let name = UserDefaults.standard.string(forKey: "NASComics.cacheName." + file.lastPathComponent) ?? "章节缓存 " + String(file.lastPathComponent.prefix(8))
-            return CacheItem(id: file, name: name, size: Int64((try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0))
+        let config = try? configuration()
+        let defaults = UserDefaults.standard
+        let policy = PrivacyDisplayStore.shared.policy
+        return files.compactMap { file -> CacheItem? in
+            guard file.pathExtension == "cbz" else { return nil }
+            let suffix = file.lastPathComponent
+            let path = defaults.string(forKey: "NASComics.cachePath." + suffix) ?? ""
+            let parent = (path as NSString).deletingLastPathComponent
+            var fingerprint = defaults.string(forKey: "NASComics.cacheFingerprint." + suffix)
+            // Legacy metadata has no connection identity. Recognize it only by an exact hash match
+            // against this connection's saved directory, never merely by an identical manga path.
+            if fingerprint == nil, let config, !path.isEmpty,
+               let listing = try? listingURL(parent, config: config),
+               let data = try? Data(contentsOf: listing),
+               let entries = try? JSONDecoder().decode([NASComicEntry].self, from: data),
+               let entry = entries.first(where: { $0.path == path }),
+               (try? cacheURL(entry, config: config)) == file { fingerprint = config.fingerprint }
+            let current = fingerprint != nil && fingerprint == config?.fingerprint
+            if policy.hidesExplicit {
+                guard current, isComicVisible(path: path, isDirectory: false) else { return nil }
+            }
+            let name = defaults.string(forKey: "NASComics.cacheName." + suffix) ?? "章节缓存 " + String(suffix.prefix(8))
+            let group = parent.isEmpty ? "未分类章节" : parent
+            let manga = current ? group : "其他漫画库 · " + String((fingerprint ?? "未识别").prefix(6)) + " / " + group
+            return CacheItem(id: file, name: name, size: Int64((try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0), manga: manga)
         }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
     func removeCacheFile(_ file: URL) throws {
@@ -331,6 +358,8 @@ final class NASComicManager: ObservableObject {
         guard file.deletingLastPathComponent().standardizedFileURL == folder.standardizedFileURL, file.pathExtension == "cbz" else { throw NASComicError.invalidArchive }
         try FileManager.default.removeItem(at: file)
         UserDefaults.standard.removeObject(forKey: "NASComics.cacheName." + file.lastPathComponent)
+        UserDefaults.standard.removeObject(forKey: "NASComics.cachePath." + file.lastPathComponent)
+        UserDefaults.standard.removeObject(forKey: "NASComics.cacheFingerprint." + file.lastPathComponent)
         refreshCacheSize()
     }
     func cachedArchive(_ entry: NASComicEntry) async throws -> URL {
@@ -339,8 +368,11 @@ final class NASComicManager: ObservableObject {
         if FileManager.default.fileExists(atPath: file.path) { return file }
         guard !busy else { throw NASComicError.busy }
         refreshCacheSize()
-        guard cacheBytes + max(entry.size, NASComicClient.maxFileBytes / 10) <= cacheLimit else { throw NASComicError.cacheFull }
-        let client = try client(config)
+        let available = NASComicCachePolicy.remaining(used: cacheBytes, limit: cacheLimit)
+        guard available > 0, entry.size <= available else { throw NASComicError.cacheFull }
+        let client = try NASComicClient(connection: config.connection, root: config.root, downloadLimit: available) { [weak self] done, total in
+            Task { @MainActor in self?.progress = total > 0 ? min(1, Double(done) / Double(total)) : nil }
+        }
         busy = true; status = "正在缓存 · " + entry.name; progress = nil
         activeClient = client
         let partial = file.deletingLastPathComponent().appendingPathComponent(UUID().uuidString + ".part")
@@ -350,9 +382,14 @@ final class NASComicManager: ObservableObject {
             refreshCacheSize()
         }
         try await client.download(entry, to: partial)
+        let actual = Int64(try partial.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
+        // Recount retained archives separately from the staged file, and recheck the selected limit.
+        refreshCacheSize()
+        guard NASComicCachePolicy.fits(bytes: actual, used: max(0, cacheBytes - actual), limit: cacheLimit) else { throw NASComicError.cacheFull }
         try Self.validateArchive(partial)
         try Task.checkCancellation()
         try FileManager.default.moveItem(at: partial, to: file)
+        UserDefaults.standard.set(config.fingerprint, forKey: "NASComics.cacheFingerprint." + file.lastPathComponent)
         UserDefaults.standard.set(entry.path, forKey: "NASComics.cachePath." + file.lastPathComponent)
         UserDefaults.standard.set(entry.name, forKey: "NASComics.cacheName." + file.lastPathComponent)
         status = "章节已缓存，可离线阅读 · " + client.routeLabel
