@@ -20,13 +20,7 @@ class LibraryViewController: OldMangaCollectionViewController {
         titleKey: "DOWNLOAD_QUEUE",
         sharesBackground: false
     )
-    private lazy var nasLibraryButton: UIBarButtonItem = {
-        let button = UIBarButtonItem(image: UIImage(systemName: "externaldrive"), style: .plain, target: self, action: #selector(openNASLibrary))
-        button.accessibilityLabel = "NAS 漫画库"
-        button.accessibilityIdentifier = "library.nas"
-        return button
-    }()
-    @objc private func openNASLibrary() {
+    private func openNASLibrary() {
         let controller = UIHostingController(rootView: NASComicLibrarySheet())
         controller.modalPresentationStyle = .pageSheet
         if let sheet = controller.sheetPresentationController { sheet.detents = [.large()] }
@@ -568,7 +562,7 @@ extension LibraryViewController {
             }
             items.append(mangaUpdatesButton)
             navigationItem.rightBarButtonItems = items
-            navigationItem.leftBarButtonItem = nasLibraryButton
+            navigationItem.leftBarButtonItem = nil
             Task { @MainActor in
                 if await DownloadManager.shared.hasQueuedDownloads() {
                     let index = (navigationItem.rightBarButtonItems?.count ?? 1) - 1
@@ -1116,6 +1110,14 @@ extension LibraryViewController {
     }
 
     func updateMoreMenu() {
+        let nasLibraryAction = UIAction(
+            title: "NAS 漫画库",
+            image: UIImage(systemName: "externaldrive"),
+            identifier: UIAction.Identifier("library.nas")
+        ) { [weak self] _ in
+            self?.openNASLibrary()
+        }
+
         let selectAction = UIAction(
             title: NSLocalizedString("SELECT"),
             image: UIImage(systemName: "checkmark.circle")
@@ -1249,7 +1251,7 @@ extension LibraryViewController {
 
         moreBarButton.menu = UIMenu(
             children: [
-                UIMenu(options: .displayInline, children: [selectAction]),
+                UIMenu(options: .displayInline, children: [nasLibraryAction, selectAction]),
                 UIMenu(options: .displayInline, children: layoutActions),
                 UIMenu(options: .displayInline, children: [sortMenu, filterMenu])
             ]
