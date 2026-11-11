@@ -78,6 +78,8 @@ struct NASConnection: Codable, Equatable {
 final class NASWebDAVClient: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     private let connection: NASConnection
     private var session: URLSession!
+    private let cancellationLock = NSLock()
+    private var closed = false
     private let router: NASRequestRouter
     private let connectionMetrics: NASConnectionMetrics
     var routeLabel: String { router.routeLabel }
@@ -96,7 +98,20 @@ final class NASWebDAVClient: NSObject, URLSessionTaskDelegate, @unchecked Sendab
         session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
     }
 
-    func close() { session.invalidateAndCancel() }
+    func close() {
+        cancellationLock.lock()
+        closed = true
+        cancellationLock.unlock()
+        session.invalidateAndCancel()
+    }
+
+    private func checkOpen() throws {
+        try Task.checkCancellation()
+        cancellationLock.lock()
+        let isClosed = closed
+        cancellationLock.unlock()
+        if isClosed { throw CancellationError() }
+    }
 
     func urlSession(
         _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
@@ -170,15 +185,18 @@ final class NASWebDAVClient: NSObject, URLSessionTaskDelegate, @unchecked Sendab
 
     func synchronize(_ local: NASSyncDocument) async throws -> NASSyncDocument {
         for attempt in 0..<3 {
-            try Task.checkCancellation()
+            try checkOpen()
             let remote = try await read()
+            try checkOpen()
             let candidate = local.merging(remote.document)
             try candidate.validate()
             do {
                 if remote.etag == nil || candidate != remote.document {
                     try await write(candidate, etag: remote.etag)
                 }
+                try checkOpen()
                 let verified = try await read()
+                try checkOpen()
                 guard verified.etag != nil, verified.document.merging(candidate) == verified.document else {
                     throw NASSyncError.conflict
                 }
@@ -191,7 +209,9 @@ final class NASWebDAVClient: NSObject, URLSessionTaskDelegate, @unchecked Sendab
     }
 
     func read() async throws -> (document: NASSyncDocument, etag: String?) {
-        try await router.send(request("GET")) { request in
+        try checkOpen()
+        return try await router.send(request("GET")) { request in
+            try self.checkOpen()
             let (bytes, response) = try await self.session.bytes(for: request)
             defer { bytes.task.cancel() }
             guard let response = response as? HTTPURLResponse else { throw NASSyncError.http(0) }
@@ -216,6 +236,7 @@ final class NASWebDAVClient: NSObject, URLSessionTaskDelegate, @unchecked Sendab
     }
 
     func write(_ document: NASSyncDocument, etag: String?) async throws {
+        try checkOpen()
         var request = try request("PUT")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(etag ?? "*", forHTTPHeaderField: etag == nil ? "If-None-Match" : "If-Match")
@@ -224,7 +245,11 @@ final class NASWebDAVClient: NSObject, URLSessionTaskDelegate, @unchecked Sendab
         let data = try encoder.encode(document)
         guard data.count <= Self.maxBytes else { throw NASSyncError.tooLarge }
         request.httpBody = data
-        let (_, response) = try await router.send(request) { try await self.session.data(for: $0) }
+        let (_, response) = try await router.send(request) {
+            try self.checkOpen()
+            return try await self.session.data(for: $0)
+        }
+        try checkOpen()
         guard let response = response as? HTTPURLResponse else { throw NASSyncError.http(0) }
         try check(response.statusCode, allowed: [200, 201, 204])
     }

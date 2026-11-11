@@ -18,6 +18,8 @@ source = Path('Aidoku/Core/Sync/NASSyncManager.swift').read_text()
 source = source.replace('import UIKit', 'import Foundation\nimport Combine')
 source = source.replace('nonisolated private func snapshot', 'nonisolated func snapshot')
 source = source.replace('nonisolated private func apply', 'nonisolated func apply')
+source = source.replace('private var syncGeneration', 'var syncGeneration')
+source = source.replace('private func checkSyncAllowed', 'func checkSyncAllowed')
 Path(sys.argv[1]).write_text(source)
 PY
 xcrun swiftc -parse-as-library Aidoku/Core/Sync/NASSyncDocument.swift Aidoku/Core/Sync/NASWebDAVClient.swift Aidoku/Core/Sync/NASComicDirectory.swift Aidoku/Core/Sync/NASRequestRouter.swift Aidoku/Core/Sync/NASFolderListing.swift "$NAS_TEST_DIR/Manager.swift" Aidoku/Core/Database/Objects/LibraryMangaObject.swift Aidoku/Core/Database/Objects/HistoryObject.swift Tests/NASDatabase/Stubs.swift Tests/NASDatabase/main.swift -o "$NAS_TEST_DIR/database"

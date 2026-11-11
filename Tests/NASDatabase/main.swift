@@ -36,6 +36,18 @@ import Foundation
         expect(next == deletion, "applied tombstones must remain stable")
         _ = try manager.apply(remote, expected: [:], context: context)
         expect(try manager.snapshot(context) == incoming, "explicit re-add restores membership and progress")
-        print("PASS: 9 database integration checks using the actual compiled Core Data model")
+        // Simulate a request suspended at await while the user switches providers.
+        let oldGeneration = manager.syncGeneration
+        AppSettings.general.icloudSync.value = true
+        manager.cloudConfigurationDidChange()
+        do { try manager.checkSyncAllowed(generation: oldGeneration); fatalError("old request can apply after enable") } catch is CancellationError {}
+        AppSettings.general.icloudSync.value = false
+        manager.cloudConfigurationDidChange()
+        do { try manager.checkSyncAllowed(generation: oldGeneration); fatalError("old request revived after off/on") } catch is CancellationError {}
+        CoreDataManager.shared.usesCloudKitMirroring = true
+        do { try manager.checkSyncAllowed(generation: manager.syncGeneration); fatalError("pending restart permits NAS") } catch is CancellationError {}
+        CoreDataManager.shared.usesCloudKitMirroring = false
+        try manager.checkSyncAllowed(generation: manager.syncGeneration)
+        print("PASS: provider switching and restart guard; 9 database integration checks using the actual compiled Core Data model")
     }
 }

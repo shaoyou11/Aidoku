@@ -5,7 +5,7 @@ struct MangaIdentifier { let sourceKey: String; let mangaKey: String }
 struct ChapterIdentifier { let sourceKey: String; let mangaKey: String; let chapterKey: String }
 enum LocalSourceRunner { static let sourceKey = "local" }
 enum AppSettings {
-    struct Flag { func get() -> Bool { false } }
+    final class Flag: @unchecked Sendable { var value = false; func get() -> Bool { value } }
     struct General { let icloudSync = Flag() }
     static let general = General()
 }
@@ -33,6 +33,7 @@ extension Notification.Name {
 
 final class CoreDataManager: @unchecked Sendable {
     static let shared = CoreDataManager()
+    var usesCloudKitMirroring = false
     let container: NSPersistentContainer
     @MainActor var context: NSManagedObjectContext { container.viewContext }
     init() {

@@ -11,6 +11,7 @@ final class MockDAV: URLProtocol {
     static var rejectWrites = false
     static var conditionals: [String] = []
     static var requests: [URLRequest] = []
+    static var afterGET: (() -> Void)?
 
     static func reset(_ document: NASSyncDocument? = nil) {
         self.document = document
@@ -79,6 +80,11 @@ final class MockDAV: URLProtocol {
             let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers)!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: data)
+            if request.httpMethod == "GET" {
+                let callback = Self.afterGET
+                Self.afterGET = nil
+                callback?()
+            }
             client?.urlProtocolDidFinishLoading(self)
         } catch { client?.urlProtocol(self, didFailWithError: error) }
     }
@@ -159,6 +165,17 @@ final class MockDAV: URLProtocol {
         do { _ = try await client.createFolder(named: "denied", in: root); fatalError("permission failure accepted") } catch NASSyncError.authentication {}
         MockDAV.forceStatus = 405
         do { _ = try await client.createFolder(named: "existing", in: root); fatalError("existing folder accepted") } catch NASSyncError.folderExists {}
-        print("PASS: 10 sync transport scenarios plus folder browsing, MKCOL, path encoding, origin and permission checks")
+        MockDAV.reset(.init())
+        let cancelledClient = NASWebDAVClient(connection: .init(folder: "https://nas.invalid/aidoku", username: "test", password: "test"), configuration: configuration)
+        MockDAV.afterGET = { cancelledClient.close() }
+        do {
+            _ = try await cancelledClient.synchronize(local)
+            fatalError("closed sync completed")
+        } catch is CancellationError {} catch let error as URLError where error.code == .cancelled {}
+        expect(MockDAV.writes == 0, "switching sync provider after GET must prevent PUT")
+        let requestsBeforeClosedWrite = MockDAV.requests.count
+        do { try await cancelledClient.write(local, etag: nil); fatalError("closed client wrote") } catch is CancellationError {}
+        expect(MockDAV.requests.count == requestsBeforeClosedWrite, "closed client must not restart network work")
+        print("PASS: cancellation prevents PUT and reuse; 10 sync transport scenarios plus folder browsing, MKCOL, path encoding, origin and permission checks")
     }
 }

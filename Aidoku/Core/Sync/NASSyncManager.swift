@@ -10,6 +10,32 @@ final class NASSyncManager: ObservableObject {
     @Published private(set) var status = "尚未同步"
     @Published private(set) var lastSync: Date?
     private var automaticTask: Task<Void, Never>?
+    private var activeClient: NASWebDAVClient?
+    private var syncGeneration: UInt64 = 0
+
+    private var cloudBlocksNAS: Bool {
+        AppSettings.general.icloudSync.get() || CoreDataManager.shared.usesCloudKitMirroring
+    }
+
+    private var cloudPauseMessage: String {
+        CoreDataManager.shared.usesCloudKitMirroring
+            ? "iCloud 同步仍在当前会话运行；请关闭开关并重新打开 App 后使用 NAS 同步。"
+            : "已选择 iCloud 同步，NAS 同步已暂停；重新打开 App 后 iCloud 设置生效。"
+    }
+
+    /// Invalidate both manual and automatic requests before the setting handler returns.
+    func cloudConfigurationDidChange() {
+        syncGeneration &+= 1
+        stopAutomaticSync()
+        activeClient?.close()
+        status = cloudBlocksNAS ? cloudPauseMessage : "同步方式已更改，之前的 NAS 请求已取消。"
+        if !cloudBlocksNAS { startAutomaticSync() }
+    }
+
+    private func checkSyncAllowed(generation: UInt64) throws {
+        try Task.checkCancellation()
+        guard generation == syncGeneration, !cloudBlocksNAS else { throw CancellationError() }
+    }
     private static let service = (Bundle.main.bundleIdentifier ?? "Aidoku") + ".NASConnection"
     private static let deviceKey = "NASSync.device"
     private static let automaticKey = "NASSync.automatic"
@@ -60,10 +86,10 @@ final class NASSyncManager: ObservableObject {
     }
 
     func startAutomaticSync() {
-        guard automaticTask == nil, automatic else { return }
+        guard automaticTask == nil, automatic, !cloudBlocksNAS else { return }
         automaticTask = Task { [weak self] in
             while !Task.isCancelled {
-                guard let self, self.automatic else { break }
+                guard let self, self.automatic, !self.cloudBlocksNAS else { break }
                 await self.sync()
                 do { try await Task.sleep(nanoseconds: 60_000_000_000) } catch { break }
             }
@@ -77,10 +103,11 @@ final class NASSyncManager: ObservableObject {
 
     func sync(restoreOnly: Bool = false) async {
         guard !busy else { return }
-        guard !AppSettings.general.icloudSync.get(), !CoreDataManager.shared.usesCloudKitMirroring else {
-            status = "请先关闭 iCloud 同步并重新打开 App，再使用 NAS 同步。"
+        guard !cloudBlocksNAS else {
+            status = cloudPauseMessage
             return
         }
+        let generation = syncGeneration
         busy = true
         status = restoreOnly ? "正在从 NAS 恢复…" : "正在同步…"
         defer { busy = false }
@@ -96,10 +123,15 @@ final class NASSyncManager: ObservableObject {
             local.capture(snapshot, device: deviceID(), now: Date())
             try saveState(local, to: stateURL) // persist unsent edits before touching the network
             let client = NASWebDAVClient(connection: connection)
-            defer { client.close() }
+            activeClient = client
+            defer {
+                client.close()
+                activeClient = nil
+            }
             let merged: NASSyncDocument
             if restoreOnly {
                 let remote = try await client.read()
+                try checkSyncAllowed(generation: generation)
                 guard remote.etag != nil, remote.document.records.values.contains(where: { $0.value != nil }) else {
                     status = "NAS 中没有可恢复的书架或阅读进度，请确认选择了原来的同步文件夹。"
                     return
@@ -109,7 +141,9 @@ final class NASSyncManager: ObservableObject {
             } else {
                 merged = try await client.synchronize(local)
             }
-            try Task.checkCancellation()
+            // The setting can change while either manual or automatic network work awaits.
+            // No await is allowed between this check and the local database commit.
+            try checkSyncAllowed(generation: generation)
             // Keep a recoverable local copy before any inbound changes. Never contains credentials.
             try saveState(local, to: directory.appendingPathComponent(restoreOnly ? "before-last-restore.json" : "before-last-sync.json"))
             if context.hasChanges { try context.save() }
@@ -132,12 +166,15 @@ final class NASSyncManager: ObservableObject {
             }
             status += " · " + client.routeLabel
         } catch is CancellationError {
-            status = "同步已暂停，下次打开 App 时重试"
+            status = cloudBlocksNAS ? cloudPauseMessage : "同步已暂停，本机修改已保留。"
         } catch let error as NASSyncError {
-            status = error.localizedDescription
+            status = cloudBlocksNAS ? cloudPauseMessage : error.localizedDescription
         } catch {
             // URLSession/Core Data errors can embed private server addresses. Never display raw errors.
-            if (error as? URLError)?.code == .cancelled { return }
+            if generation != syncGeneration || cloudBlocksNAS || (error as? URLError)?.code == .cancelled {
+                status = cloudBlocksNAS ? cloudPauseMessage : "同步已暂停，本机修改已保留。"
+                return
+            }
             status = NASConnection.message(for: error) + " 本机修改已保留。"
         }
     }

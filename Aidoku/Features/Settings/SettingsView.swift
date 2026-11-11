@@ -157,6 +157,9 @@ extension SettingsView {
 
     func onSettingChange(_ key: String) {
         switch key {
+            case AppSettings.general.icloudSync.key:
+                NASSyncManager.shared.cloudConfigurationDidChange()
+
             case AppSettings.appearance.appearance.key, AppSettings.appearance.useSystemAppearance.key:
                 if !AppSettings.appearance.useSystemAppearance.get() {
                     if AppSettings.appearance.appearance.get() == 0 {
