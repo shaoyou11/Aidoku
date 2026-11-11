@@ -215,6 +215,19 @@ struct AddSourceView: View {
 
     var builtInSources: some View {
         Section(NSLocalizedString("BUILT_IN_SOURCES")) {
+            NavigationLink {
+                NASComicLibraryView()
+            } label: {
+                Label {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("NAS 漫画库")
+                        Text("连接 WebDAV，选择已有漫画文件夹")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: "externaldrive.fill")
+                }
+            }
 //            if !CoreDataManager.shared.hasSource(key: "demo", context: CoreDataManager.shared.context) {
 //                ExternalSourceTableCell(
 //                    source: .init(

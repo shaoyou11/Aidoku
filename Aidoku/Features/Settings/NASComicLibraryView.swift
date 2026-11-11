@@ -191,12 +191,16 @@ struct NASComicLibraryView: View {
                 Button { showManagement = true } label: { Image(systemName: "slider.horizontal.3") }.accessibilityLabel("漫画库管理")
             }
         }
-        .sheet(isPresented: $showManagement) {
+        .sheet(isPresented: $showManagement, onDismiss: {
+            Task { await load() }
+        }) {
             NavigationView {
                 Form {
                     Section {
-                        Text((try? manager.configuration().root.path) ?? "请先在 NAS 同步中保存连接")
+                        Text((try? manager.configuration().root.path) ?? "请先打开下方“NAS 连接设置”并保存连接，再选择原来的漫画文件夹。")
                             .font(.footnote).foregroundStyle(.secondary).privacySensitive()
+                        Text("NAS 连接和漫画目录仅保存在本机。换到 TestFlight 版或新设备后需重新配置；iCloud 书架同步可继续开启，不影响 NAS 漫画阅读。")
+                            .font(.footnote).foregroundStyle(.secondary)
                         Button {
                             do {
                                 let config = try manager.configuration()
