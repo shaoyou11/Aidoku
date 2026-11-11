@@ -131,11 +131,7 @@ enum Settings {
                         ])))
                     ],
                     icon: .system(name: "icloud.fill", color: "blue"),
-                    info: NSLocalizedString(
-                        AppSettings.flags.isSideloaded.get()
-                            ? "ICLOUD_SYNC_TEXT_SIDELOADED"
-                            : "ICLOUD_SYNC_TEXT_EXPERIMENTAL"
-                    )
+                    info: "同一 Apple 账户的设备可同步书架、分类、阅读进度和历史。更改开关后，请完全关闭并重新打开 App 生效。首次启用前会自动保留本地书库副本；离线下载和书源需在各设备单独配置。启用期间暂停 NAS 同步。"
                 ))
             )
         ] : []) + [

@@ -34,7 +34,7 @@ final class CoreDataManager: @unchecked Sendable {
     private var lastHistoryToken: NSPersistentHistoryToken?
     private var didLoadHistoryToken = false
     private var lastHistoryPurge: Date?
-    private var usesCloudKitMirroring: Bool
+    private(set) var usesCloudKitMirroring: Bool
 
     private static let historyTokenUrl = FileManager.default.applicationSupportDirectory
         .appendingPathComponent("historyToken.data")
@@ -54,7 +54,16 @@ final class CoreDataManager: @unchecked Sendable {
     }
 
     private init() {
-        let usesCloudKitMirroring = Self.shouldUseiCloud
+        var usesCloudKitMirroring = Self.shouldUseiCloud
+        if usesCloudKitMirroring {
+            do {
+                try Self.preserveLibraryBeforeFirstCloudSync()
+            } catch {
+                // A failed safety copy must never risk the existing library.
+                usesCloudKitMirroring = false
+                LogManager.logger.error("iCloud safety backup failed: \(error.localizedDescription)")
+            }
+        }
         self.usesCloudKitMirroring = usesCloudKitMirroring
         self.container = Self.createContainer(usesCloudKitMirroring: usesCloudKitMirroring)
 
@@ -66,17 +75,6 @@ final class CoreDataManager: @unchecked Sendable {
             self?.storeRemoteChange()
         }
         .store(in: &cancellables)
-
-        Publishers.Merge(
-            NotificationCenter.default.publisher(for: .init(AppSettings.general.icloudSync.key)),
-            NotificationCenter.default.publisher(for: NSNotification.Name.NSUbiquityIdentityDidChange)
-        )
-            .sink { [weak self] _ in
-                Task { @MainActor in
-                    self?.updateCloudConfiguration()
-                }
-            }
-            .store(in: &cancellables)
     }
 
     static func createContainer(usesCloudKitMirroring: Bool) -> NSPersistentCloudKitContainer {
@@ -118,11 +116,17 @@ final class CoreDataManager: @unchecked Sendable {
             }
         }
 
-//        do {
-//            try container.initializeCloudKitSchema(options: [.printSchema])
-//        } catch {
-//            print("error initializing cloudkit schema:", error)
-//        }
+#if DEBUG
+        // Opt in from the development scheme once, then deploy the resulting
+        // schema to Production in CloudKit Console before TestFlight testing.
+        if usesCloudKitMirroring && ProcessInfo.processInfo.arguments.contains("-InitializeCloudKitSchema") {
+            do {
+                try container.initializeCloudKitSchema(options: [])
+            } catch {
+                LogManager.logger.error("CloudKit schema initialization failed: \(error.localizedDescription)")
+            }
+        }
+#endif
 
         return container
     }
@@ -167,19 +171,25 @@ final class CoreDataManager: @unchecked Sendable {
         }
     }
 
-    @MainActor
-    func updateCloudConfiguration() {
-        let usesCloudKitMirroring = Self.shouldUseiCloud
-        remoteHistoryQueue.addOperation { [weak self] in
-            self?.usesCloudKitMirroring = usesCloudKitMirroring
-        }
-
-        guard let cloudDescription = self.container.persistentStoreDescriptions.first else { return }
-        if usesCloudKitMirroring {
-            cloudDescription.cloudKitContainerOptions = NSPersistentCloudKitContainerOptions(containerIdentifier: CoreDataManager.containerID)
-        } else {
-            cloudDescription.cloudKitContainerOptions = nil
-        }
+    /// Preserve a SQLite-consistent copy, including WAL contents, before the first
+    /// CloudKit import. Keep the same live store URL so an empty cloud only exports
+    /// local records instead of replacing the user's library.
+    private static func preserveLibraryBeforeFirstCloudSync() throws {
+        let directory = FileManager.default.applicationSupportDirectory
+        let source = directory.appendingPathComponent("Aidoku.sqlite")
+        guard FileManager.default.fileExists(atPath: source.path) else { return }
+        let backups = directory.appendingPathComponent("Before-iCloud", isDirectory: true)
+        let destination = backups.appendingPathComponent("Aidoku.sqlite")
+        let completion = backups.appendingPathComponent("complete")
+        guard !FileManager.default.fileExists(atPath: completion.path) else { return }
+        try FileManager.default.createDirectory(at: backups, withIntermediateDirectories: true)
+        let model = NSPersistentCloudKitContainer(name: "Aidoku").managedObjectModel
+        let coordinator = NSPersistentStoreCoordinator(managedObjectModel: model)
+        try coordinator.replacePersistentStore(
+            at: destination, destinationOptions: nil,
+            withPersistentStoreFrom: source, sourceOptions: nil, ofType: NSSQLiteStoreType
+        )
+        try Data().write(to: completion, options: .atomic)
     }
 
     // TODO: clean this up

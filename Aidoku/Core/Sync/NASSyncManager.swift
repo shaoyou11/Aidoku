@@ -77,8 +77,8 @@ final class NASSyncManager: ObservableObject {
 
     func sync(restoreOnly: Bool = false) async {
         guard !busy else { return }
-        guard !AppSettings.general.icloudSync.get() else {
-            status = "请先关闭 iCloud 同步，再使用 NAS 同步。"
+        guard !AppSettings.general.icloudSync.get(), !CoreDataManager.shared.usesCloudKitMirroring else {
+            status = "请先关闭 iCloud 同步并重新打开 App，再使用 NAS 同步。"
             return
         }
         busy = true

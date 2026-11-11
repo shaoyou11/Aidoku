@@ -5,7 +5,9 @@ app=Path('build/AidokuT.xcarchive/Products/Applications/Aidoku.app')
 p=app/'Info.plist'
 info=plistlib.loads(p.read_bytes())
 info['CFBundleDisplayName']='AidokuT'
-info['AidokuTCloudSyncDisabled']=True
+# Unsigned side-load packages keep cloud sync disabled unless their signing flow
+# explicitly supplies the iCloud entitlements. TestFlight archives do not use this script.
+info['AidokuTCloudSyncDisabled']=os.environ.get('AIDOKUT_ICLOUD_ENABLED') != '1'
 from urllib.parse import urlsplit
 portal=os.environ.get('AIDOKUT_UPDATE_URL','').strip()
 parsed=urlsplit(portal)
