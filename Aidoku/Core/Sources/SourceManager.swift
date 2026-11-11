@@ -272,8 +272,11 @@ extension SourceManager {
             }
         }
         guard var externalSources else { return nil }
+        // Legacy directory indexes resolve package/icon paths inside the directory.
+        // A JSON list file instead keeps normal file-relative URL semantics.
+        let sourceBaseURL = url.pathExtension.isEmpty ? url.appendingPathComponent("", isDirectory: true) : url
         for index in externalSources.indices {
-            externalSources[index].sourceUrl = url
+            externalSources[index].sourceUrl = sourceBaseURL
         }
         return SourceList(
             url: url,
