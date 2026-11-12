@@ -17,3 +17,7 @@
 NAS 页面增加“从 NAS 恢复书架与进度”。此操作仅 GET 读取现有同步文档，保留本机独有条目，按时间合并重合条目，忽略远端删除标记，恢复前保存本机快照。不恢复漫画图片，也无法恢复已从同步文档删除的内容。开启前台自动同步后仍会继续双向同步。
 
 正式开发者与内部 TestFlight 构建启用专用 CloudKit 容器；通用自签包仍由打包流程设置 `AidokuTCloudSyncDisabled`，避免缺少权限时误开启。书架与进度同一时间只使用 NAS 或 iCloud；切换 iCloud 会取消 NAS 请求并阻止旧结果回写，当前会话仍运行 CloudKit 时须重启后才能恢复 NAS 同步。NAS 漫画库的文件浏览、下载及缓存阅读独立于书架同步方式，继续可用。
+
+## Xcode Cloud
+
+内部归档使用个人开发团队和 custom/nas-sync 分支。ci_post_clone.sh 仅在 Xcode Cloud 临时执行环境设置 SwiftLint 的无交互插件校验选项；先验证已检查的完整 Package.resolved 摘要，依赖变化时停止并要求重新检查。不会修改本机 Xcode 设置，也不跳过宏校验。
