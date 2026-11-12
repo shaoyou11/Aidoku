@@ -681,10 +681,13 @@ extension LibraryViewController {
                     actions: [
                         UIAlertAction(title: NSLocalizedString("OK"), style: .cancel),
                         UIAlertAction(title: NSLocalizedString("REFRESH_ANYWAYS"), style: .default) { _ in
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
                             Task {
                                 await MangaManager.shared.backgroundRefreshLibrary(
-                                    category: self.viewModel.isInRealCategory ? self.viewModel.currentCategory : nil,
-                                    skipReachabilityCheck: true
+                                    category: nil,
+                                    skipReachabilityCheck: true,
+                                    forceAll: true,
+                                    isUserInitiated: true
                                 )
                             }
                         }
@@ -695,9 +698,12 @@ extension LibraryViewController {
 
         // trigger library refresh
         guard !isBlockedByNoWifi else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
         Task {
             await MangaManager.shared.backgroundRefreshLibrary(
-                category: viewModel.isInRealCategory ? viewModel.currentCategory : nil
+                category: nil,
+                forceAll: true,
+                isUserInitiated: true
             )
         }
     }

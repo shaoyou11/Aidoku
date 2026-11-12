@@ -389,7 +389,18 @@ extension MangaManager {
         }
     }
 
-    func backgroundRefreshLibrary(category: String? = nil, skipReachabilityCheck: Bool = false) async {
+    func backgroundRefreshLibrary(
+        category: String? = nil,
+        skipReachabilityCheck: Bool = false,
+        forceAll: Bool = false,
+        isUserInitiated: Bool = false
+    ) async {
+        if isUserInitiated {
+            // A pull-to-refresh stays in-app: no continued-processing system alert.
+            await refreshLibrary(category: category, forceAll: forceAll, isUserInitiated: true,
+                                 skipReachabilityCheck: skipReachabilityCheck)
+            return
+        }
         targetCategory = category
         self.skipReachabilityCheck = skipReachabilityCheck
 
@@ -416,6 +427,8 @@ extension MangaManager {
     func refreshLibrary(
         category: String? = nil,
         forceAll: Bool = false,
+        isUserInitiated: Bool = false,
+        skipReachabilityCheck: Bool? = nil,
         task: (ProgressReporting & Sendable)? = nil
     ) async {
         let tabController = await UIApplication.shared.firstKeyWindow?.rootViewController as? TabBarController
@@ -423,14 +436,21 @@ extension MangaManager {
         if libraryRefreshTask != nil {
             // wait for already running library refresh
             await libraryRefreshTask?.value
+            if isUserInitiated && forceAll {
+                // A partial scheduled run must not consume a request for the entire library.
+                await refreshLibrary(category: category, forceAll: true, isUserInitiated: true,
+                                     skipReachabilityCheck: skipReachabilityCheck, task: task)
+                return
+            }
         } else {
             // spawn new library refresh
             AppSettings.flags.libraryRefreshInProgress.set(true)
             libraryRefreshTask = Task {
                 await doLibraryRefresh(
                     category: category,
-                    skipReachabilityCheck: skipReachabilityCheck,
+                    skipReachabilityCheck: skipReachabilityCheck ?? self.skipReachabilityCheck,
                     forceAll: forceAll,
+                    isUserInitiated: isUserInitiated,
                     task: task,
                     refreshStarted: {
                         await tabController?.showLibraryRefreshView()
@@ -459,6 +479,8 @@ extension MangaManager {
 
         // wait 0.5s for final progress animation to complete
         try? await Task.sleep(nanoseconds: 500_000_000)
+        // A forced manual run may have started while a partial run was finishing.
+        guard libraryRefreshTask == nil else { return }
         await tabController?.hideAccessoryView()
 
         NotificationCenter.default.post(name: .updateLibrary, object: nil)
@@ -470,6 +492,7 @@ extension MangaManager {
     private nonisolated func shouldSkip(
         manga: Manga,
         options: [String],
+        forceAll: Bool = false,
         excludedCategories: [String] = [],
         loadedSourceKeys: Set<String>,
         context: NSManagedObjectContext
@@ -478,15 +501,14 @@ extension MangaManager {
         if manga.updateStrategy == .never {
             return true
         }
+        // Missing sources and sources that cannot update still cannot be refreshed.
+        if !loadedSourceKeys.contains(manga.sourceId) { return true }
+        if forceAll { return false }
         // next update time hasn't been reached
         if let nextUpdateTime = manga.nextUpdateTime {
             if nextUpdateTime > Date() {
                 return true
             }
-        }
-        // source is missing
-        if !loadedSourceKeys.contains(manga.sourceId) {
-            return true
         }
         // completed
         if options.contains("completed") && manga.status == .completed {
@@ -532,6 +554,7 @@ extension MangaManager {
         category: String?,
         skipReachabilityCheck: Bool,
         forceAll: Bool,
+        isUserInitiated: Bool,
         task: ProgressReporting? = nil,
         refreshStarted: (() async -> Void)? = nil
     ) async {
@@ -575,6 +598,7 @@ extension MangaManager {
                 !self.shouldSkip(
                     manga: manga,
                     options: skipOptions,
+                    forceAll: forceAll,
                     excludedCategories: excludedCategories,
                     loadedSourceKeys: allLoadedSourceKeys,
                     context: context
@@ -586,7 +610,7 @@ extension MangaManager {
         var completed = 0
 
         let isBackground = await UIApplication.shared.applicationState != .active
-        let notificationsEnabled = isBackground && NotificationManager.shared.isEnabled()
+        let notificationsEnabled = !isUserInitiated && isBackground && NotificationManager.shared.isEnabled()
         var pendingNotifications: [NotificationManager.NewChaptersSummary] = []
 
         let newDetails = await {

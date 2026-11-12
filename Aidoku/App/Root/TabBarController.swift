@@ -10,6 +10,7 @@ import SwiftUI
 import SwiftUIIntrospect
 
 class TabBarController: UITabBarController {
+    private let tabSelectionFeedback = UISelectionFeedbackGenerator()
     private var originalFrame: CGRect = .zero
     private var shrunkFrame: CGRect = .zero
     private var cancellables: [AnyCancellable] = []
@@ -315,6 +316,8 @@ extension TabBarController: UITabBarControllerDelegate {
     @available(iOS 18.0, *)
     func tabBarController(_ tabBarController: UITabBarController, shouldSelectTab tab: UITab) -> Bool {
         if #available(iOS 26.0, *) {
+            tabSelectionFeedback.selectionChanged()
+            tabSelectionFeedback.prepare()
             PrivacyDisplayStore.shared.libraryTabTapped(isLibrary: tab.identifier == "0")
         }
         if tab === tabBarController.selectedTab {
@@ -325,6 +328,8 @@ extension TabBarController: UITabBarControllerDelegate {
 
     func tabBarController(_ tabBarController: UITabBarController, shouldSelect viewController: UIViewController) -> Bool {
         if #unavailable(iOS 26.0) {
+            tabSelectionFeedback.selectionChanged()
+            tabSelectionFeedback.prepare()
             PrivacyDisplayStore.shared.libraryTabTapped(isLibrary: viewController.tabBarItem.tag == 0)
         }
         if viewController === selectedViewController {

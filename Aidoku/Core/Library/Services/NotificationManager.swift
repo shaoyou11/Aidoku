@@ -83,7 +83,7 @@ actor NotificationManager {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
-        content.sound = .default
+        content.sound = AppSettings.library.newChapterNotificationSound.get() ? .default : nil
         content.threadIdentifier = threadIdentifier
         content.categoryIdentifier = categoryIdentifier
         content.userInfo = userInfo

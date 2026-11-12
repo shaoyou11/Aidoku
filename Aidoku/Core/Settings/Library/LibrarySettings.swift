@@ -32,6 +32,7 @@ struct LibrarySettings: Sendable {
             updateOnlyOnWifi,
             refreshMetadata,
             notifyNewChapters,
+            newChapterNotificationSound,
             filtersData
         ]
     }
@@ -61,6 +62,7 @@ struct LibrarySettings: Sendable {
     let updateOnlyOnWifi = SettingsKey<Bool>("Library.updateOnlyOnWifi", default: true)
     let refreshMetadata = SettingsKey<Bool>("Library.refreshMetadata", default: false)
     let notifyNewChapters = SettingsKey<Bool>("Library.notifyNewChapters", default: false)
+    let newChapterNotificationSound = SettingsKey<Bool>("Library.newChapterNotificationSound", default: false)
 
     let filtersData = SettingsKey<Data?>("Library.filters")
 }

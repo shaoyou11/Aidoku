@@ -359,6 +359,12 @@ extension Settings {
                         key: AppSettings.library.notifyNewChapters.key,
                         title: NSLocalizedString("NEW_CHAPTER_NOTIFICATIONS"),
                         value: .toggle(.init())
+                    ),
+                    .init(
+                        key: AppSettings.library.newChapterNotificationSound.key,
+                        title: "新章节通知声音",
+                        requires: AppSettings.library.notifyNewChapters.key,
+                        value: .toggle(.init())
                     )
                 ]
             ))
