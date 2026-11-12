@@ -13,6 +13,9 @@ final class NASSyncManager: ObservableObject {
     private var activeClient: NASWebDAVClient?
     private var syncGeneration: UInt64 = 0
 
+    var isSyncPausedForCloud: Bool { cloudBlocksNAS }
+    var syncPauseReason: String { cloudPauseMessage }
+
     private var cloudBlocksNAS: Bool {
         AppSettings.general.icloudSync.get() || CoreDataManager.shared.usesCloudKitMirroring
     }

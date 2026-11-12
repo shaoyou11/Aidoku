@@ -12,8 +12,11 @@ import SwiftUIIntrospect
 
 struct HistoryView: View {
     @StateObject private var viewModel = ViewModel()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var searchText = ""
+    @State private var searchEnabled = false
+    @State private var searchFocused: Bool? = false
     @State private var entryToDelete: HistoryEntry?
     @State private var showClearHistoryConfirm = false
     @State private var showDeleteConfirm = false
@@ -63,11 +66,13 @@ struct HistoryView: View {
                 .listSectionSpacingPlease(10)
                 .scrollBackgroundHiddenPlease()
                 .scrollDismissesKeyboardImmediately()
-                .background(Color(uiColor: .systemBackground))
+                .background(Color(uiColor: ShelfPageBackground.color))
             }
         }
         .customSearchable(
             text: $searchText,
+            enabled: $searchEnabled,
+            focused: $searchFocused,
             stacked: false,
             onSubmit: {
                 Task {
@@ -75,6 +80,8 @@ struct HistoryView: View {
                 }
             },
             onCancel: {
+                searchEnabled = false
+                searchFocused = false
                 Task {
                     await viewModel.search(query: searchText, delay: false)
                 }
@@ -86,28 +93,22 @@ struct HistoryView: View {
                 await viewModel.search(query: newValue, delay: true)
             }
         }
-        .animation(.default, value: viewModel.filteredHistory)
+        .animation(reduceMotion ? nil : .default, value: viewModel.filteredHistory)
         .navigationTitle(NSLocalizedString("HISTORY"))
-        .navigationBarTitleDisplayMode(.automatic)
+        .navigationBarTitleDisplayMode(.inline)
+        .shelfRootChrome()
         .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                if UserDefaults.standard.bool(forKey: "History.lockHistoryTab") {
-                    Button {
-                        if locked {
-                            Task {
-                                await unlock()
-                            }
-                        } else {
-                            locked = true
-                        }
-                    } label: {
-                        Image(systemName: locked ? "lock" : "lock.open")
+            ToolbarItem(placement: .principal) {
+                ShelfTitleMenu(title: NSLocalizedString("HISTORY")) {
+                    Button { searchEnabled = true; searchFocused = true } label: { Label("查找历史", systemImage: "magnifyingglass") }
+                    if UserDefaults.standard.bool(forKey: "History.lockHistoryTab") {
+                        Button {
+                            if locked { Task { await unlock() } } else { locked = true }
+                        } label: { Label(NSLocalizedString("TOGGLE_LOCK"), systemImage: locked ? "lock" : "lock.open") }
                     }
-                }
-                Button {
-                    showClearHistoryConfirm = true
-                } label: {
-                    Image(systemName: "trash")
+                    Button(role: .destructive) { showClearHistoryConfirm = true } label: {
+                        Label(NSLocalizedString("CLEAR_READ_HISTORY"), systemImage: "trash")
+                    }
                 }
             }
         }

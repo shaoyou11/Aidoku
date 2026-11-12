@@ -340,3 +340,51 @@ extension View {
         }
     }
 }
+
+// Shared root-page chrome; setting and reader subpages retain their own presentation.
+enum ShelfPageBackground {
+    static let color = UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 9 / 255, green: 10 / 255, blue: 13 / 255, alpha: 1)
+            : UIColor(red: 248 / 255, green: 250 / 255, blue: 254 / 255, alpha: 1)
+    }
+}
+
+enum ShelfTitleStyle {
+    static let size: CGFloat = 19
+    static var uiFont: UIFont {
+        UIFontMetrics(forTextStyle: .headline).scaledFont(for: .systemFont(ofSize: size, weight: .semibold))
+    }
+}
+
+struct ShelfTitleMenu<Content: View>: View {
+    @ScaledMetric(relativeTo: .headline) private var titleSize = ShelfTitleStyle.size
+    let title: String
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        Menu(content: content) {
+            HStack(spacing: 7) {
+                Text(title).font(.system(size: titleSize, weight: .semibold))
+                Image(systemName: "chevron.down.circle.fill")
+                    .symbolRenderingMode(.hierarchical)
+                    .font(.system(size: 17))
+                    .foregroundStyle(.secondary)
+            }
+            .foregroundStyle(.primary)
+            .frame(minHeight: 44)
+        }
+    }
+}
+
+extension View {
+    @ViewBuilder
+    func shelfRootChrome() -> some View {
+        if #available(iOS 16.0, *) {
+            self.background(Color(uiColor: ShelfPageBackground.color))
+                .toolbarBackground(.hidden, for: .navigationBar)
+        } else {
+            self.background(Color(uiColor: ShelfPageBackground.color))
+        }
+    }
+}

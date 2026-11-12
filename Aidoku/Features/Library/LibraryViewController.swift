@@ -58,6 +58,9 @@ class LibraryViewController: OldMangaCollectionViewController {
         return item
     }
 
+    private let categoryTitleView = LibraryCategorySelectionHeader(frame: CGRect(x: 0, y: 0, width: 140, height: 44))
+    private let librarySearchController = UISearchController(searchResultsController: nil)
+
     private lazy var refreshControl = UIRefreshControl()
     private lazy var emptyStackView = EmptyPageStackView()
     private lazy var lockedStackView = LockedPageStackView()
@@ -86,6 +89,14 @@ class LibraryViewController: OldMangaCollectionViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         navigationController?.isToolbarHidden = true
+        if #available(iOS 26.0, *) { tabBarController?.tabBarMinimizeBehavior = .never }
+        (tabBarController as? TabBarController)?.setLibraryBarCollapsed(false, animated: false)
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        (tabBarController as? TabBarController)?.setLibraryBarCollapsed(false, animated: false)
+        if #available(iOS 26.0, *) { tabBarController?.tabBarMinimizeBehavior = .never }
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -93,11 +104,6 @@ class LibraryViewController: OldMangaCollectionViewController {
 
         // fix refresh control snapping height
         refreshControl.didMoveToSuperview()
-
-        // hack to show search bar on initial presentation
-        if !navigationItem.hidesSearchBarWhenScrolling {
-            navigationItem.hidesSearchBarWhenScrolling = true
-        }
 
         becomeFirstResponder()
     }
@@ -116,20 +122,36 @@ class LibraryViewController: OldMangaCollectionViewController {
         super.configure()
 
         title = NSLocalizedString("LIBRARY")
+        collectionView.backgroundColor = UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 9 / 255, green: 10 / 255, blue: 13 / 255, alpha: 1)
+                : UIColor(red: 248 / 255, green: 250 / 255, blue: 254 / 255, alpha: 1)
+        }
 
-        navigationController?.navigationBar.prefersLargeTitles = true
-        navigationItem.hidesSearchBarWhenScrolling = false
+        let shelfAppearance = UINavigationBarAppearance()
+        shelfAppearance.configureWithTransparentBackground()
+        shelfAppearance.shadowColor = .clear
+        shelfAppearance.titleTextAttributes = [.font: ShelfTitleStyle.uiFont]
+        navigationItem.standardAppearance = shelfAppearance
+        navigationItem.scrollEdgeAppearance = shelfAppearance
+        navigationItem.compactAppearance = shelfAppearance
+        navigationItem.compactScrollEdgeAppearance = shelfAppearance
+        if #available(iOS 26.0, *) {
+            collectionView.topEdgeEffect.style = .soft
+        }
+        navigationItem.largeTitleDisplayMode = .never
+        navigationItem.hidesSearchBarWhenScrolling = true
 
         collectionView.keyboardDismissMode = .onDrag
 
         // search controller
-        let searchController = UISearchController(searchResultsController: nil)
+        let searchController = librarySearchController
         searchController.searchResultsUpdater = self
         searchController.obscuresBackgroundDuringPresentation = false
         searchController.searchBar.placeholder = viewModel.currentCategory == nil
             ? NSLocalizedString("LIBRARY_SEARCH")
             : NSLocalizedString("CATEGORY_SEARCH")
-        navigationItem.searchController = searchController
+        searchController.delegate = self
 
         // navbar buttons
         updateMoreMenu()
@@ -167,60 +189,13 @@ class LibraryViewController: OldMangaCollectionViewController {
         collectionView.allowsMultipleSelection = !ProcessInfo.processInfo.isMacCatalystApp
         collectionView.allowsSelectionDuringEditing = true
 
-        // header view
-        let registration = UICollectionView.SupplementaryRegistration<LibraryCategorySelectionHeader>(
-            elementKind: UICollectionView.elementKindSectionHeader
-        ) { [weak self] header, _, _ in
-            guard let self, header.options.isEmpty else { return }
-
-            header.delegate = self
-            var options: [LibraryCategorySelectionHeader.Section] = []
-            if AppSettings.library.showUncategorizedCategory.get() {
-                options.append(.init(options: [NSLocalizedString("ALL"), NSLocalizedString("UNCATEGORIZED")]))
-            } else {
-                options.append(.init(options: [NSLocalizedString("ALL")]))
-            }
-            if !viewModel.categories.isEmpty {
-                options.append(.init(title: NSLocalizedString("CATEGORIES"), options: viewModel.categories))
-            }
-            if !viewModel.filterGroups.isEmpty {
-                options.append(.init(title: NSLocalizedString("FILTER_GROUPS"), options: viewModel.filterGroups.map { $0.title }))
-            }
-            header.options = options
-            if let currentCategory = viewModel.currentCategory {
-                if let index = viewModel.categories.firstIndex(of: currentCategory) {
-                    header.setSelectedOption(IndexPath(row: index, section: 1))
-                } else if let index = viewModel.filterGroups.firstIndex(where: { $0.title == currentCategory }) {
-                    header.setSelectedOption(IndexPath(row: index, section: viewModel.categories.isEmpty ? 1 : 2))
-                } else if currentCategory.isEmpty {
-                    header.setSelectedOption(.init(row: 1, section: 0))
-                }
-            }
-
-            // load locked icons
-            if AppSettings.library.lockLibrary.get() {
-                let lockedCategories = AppSettings.library.lockedCategories.get()
-                header.lockedOptions = [IndexPath(row: 0, section: 0)] + lockedCategories.compactMap { category -> IndexPath? in
-                    if let index = self.viewModel.categories.firstIndex(of: category) {
-                        return IndexPath(row: index, section: 1)
-                    }
-                    if let index = self.viewModel.filterGroups.firstIndex(where: { $0.title == category }) {
-                        return IndexPath(row: index, section: self.viewModel.categories.isEmpty ? 1 : 2)
-                    }
-                    return nil
-                }
-            }
+        // Keep category selection in the navigation title, above the shelf.
+        categoryTitleView.delegate = self
+        if #available(iOS 16.0, *) {
+            navigationItem.titleMenuProvider = { [weak self] _ in self?.makeShelfMenu() }
         }
-
-        dataSource.supplementaryViewProvider = { collectionView, kind, indexPath in
-            if kind == UICollectionView.elementKindSectionHeader {
-                return collectionView.dequeueConfiguredReusableSupplementary(
-                    using: registration,
-                    for: indexPath
-                )
-            }
-            return nil
-        }
+        updateHeaderCategories()
+        updateHeaderLockIcons()
 
         // empty text view
         emptyStackView.isHidden = true
@@ -284,22 +259,9 @@ class LibraryViewController: OldMangaCollectionViewController {
 
     private func registerDownloadsNotifications() {
         let checkNavbarDownloadButton: (Notification) -> Void = { [weak self] _ in
-            guard let self else { return }
-            Task { @MainActor in
-                guard !self.isEditing else { return }
-                let shouldShowButton = await DownloadManager.shared.hasQueuedDownloads()
-                let index = self.navigationItem.rightBarButtonItems?.firstIndex(of: self.downloadBarButton)
-                if shouldShowButton && index == nil {
-                    // rightmost button
-                    self.navigationItem.rightBarButtonItems?.insert(
-                        self.downloadBarButton,
-                        at: (self.navigationItem.rightBarButtonItems?.count ?? 1) - 1
-                    )
-                } else if !shouldShowButton, let index = index {
-                    self.navigationItem.rightBarButtonItems?.remove(at: index)
-                }
-            }
+            self?.updateMoreMenu()
         }
+
         addObserver(forName: .downloadsQueued, using: checkNavbarDownloadButton)
         addObserver(forName: .downloadCancelled, using: checkNavbarDownloadButton)
         addObserver(forName: .downloadsCancelled, using: checkNavbarDownloadButton)
@@ -476,22 +438,37 @@ class LibraryViewController: OldMangaCollectionViewController {
 
     // collection view layout with header
     override func makeCollectionViewLayout() -> UICollectionViewLayout {
-        let layout = super.makeCollectionViewLayout()
-        guard let layout = layout as? UICollectionViewCompositionalLayout else { return layout }
+        let layout = UICollectionViewCompositionalLayout { [weak self] _, environment in
+            guard let self else { return nil }
+            if self.usesListLayout { return Self.makeListLayoutSection(environment: environment) }
+            let width = environment.container.effectiveContentSize.width
+            let preference = AppSettings.appearance.layout.get()
+            var columns = max(1, Self.getGridItemsPerRow(
+                containerWidth: width,
+                isLandscape: width > environment.container.effectiveContentSize.height,
+                layout: preference
+            ))
+            // Keep explicit custom columns; use a compact three-column shelf on phones.
+            if case .standard = preference, width >= 360, width < 600 { columns = 3 }
+            let gap: CGFloat = 12
+            let cardWidth = max(1, (width - 40 - gap * CGFloat(columns - 1)) / CGFloat(columns))
+            let height = cardWidth * 1.5 + MangaGridCell.shelfTitleHeight
+            let item = NSCollectionLayoutItem(layoutSize: .init(
+                widthDimension: .fractionalWidth(1), heightDimension: .fractionalHeight(1)
+            ))
+            let group = NSCollectionLayoutGroup.horizontal(
+                layoutSize: .init(widthDimension: .fractionalWidth(1), heightDimension: .absolute(height)),
+                subitem: item, count: columns
+            )
+            group.interItemSpacing = .fixed(gap)
+            let section = NSCollectionLayoutSection(group: group)
+            section.contentInsets = .init(top: 20, leading: 20, bottom: 8, trailing: 20)
+            section.interGroupSpacing = 10
+            return section
+        }
 
         let config = UICollectionViewCompositionalLayoutConfiguration()
-        config.interSectionSpacing = layout.configuration.interSectionSpacing
-        if !viewModel.categories.isEmpty || !viewModel.filterGroups.isEmpty {
-            let globalHeader = NSCollectionLayoutBoundarySupplementaryItem(
-                layoutSize: NSCollectionLayoutSize(
-                    widthDimension: .fractionalWidth(1),
-                    heightDimension: .absolute(40)
-                ),
-                elementKind: UICollectionView.elementKindSectionHeader,
-                alignment: .top
-            )
-            config.boundarySupplementaryItems = [globalHeader]
-        }
+        config.interSectionSpacing = Self.itemSpacing + Self.sectionSpacing
         layout.configuration = config
 
         return layout
@@ -499,6 +476,7 @@ class LibraryViewController: OldMangaCollectionViewController {
 
     // cells with badges
     override func configure(cell: MangaGridCell, info: MangaInfo, indexPath: IndexPath) {
+        cell.usesLibraryShelfStyle = true
         super.configure(cell: cell, info: info, indexPath: indexPath)
 
         cell.badgeNumber = viewModel.badgeType.contains(.unread) ? info.unread : 0
@@ -517,6 +495,7 @@ class LibraryViewController: OldMangaCollectionViewController {
     }
 
     override func setEditing(_ editing: Bool, animated: Bool) {
+        (tabBarController as? TabBarController)?.setLibraryBarCollapsed(false, animated: false)
         super.setEditing(editing, animated: animated)
         updateNavbarItems()
         updateToolbar()
@@ -536,7 +515,20 @@ class LibraryViewController: OldMangaCollectionViewController {
 }
 
 extension LibraryViewController {
+    func makeShelfMenu() -> UIMenu {
+        updateMoreMenu()
+        let updates = UIAction(title: NSLocalizedString("MANGA_UPDATES"), image: UIImage(systemName: "bell")) { [weak self] _ in self?.openMangaUpdates() }
+        let downloads = UIAction(title: NSLocalizedString("DOWNLOAD_QUEUE"), image: UIImage(systemName: "arrow.down.circle")) { [weak self] _ in self?.openDownloadQueue() }
+        let lock = UIAction(title: NSLocalizedString("TOGGLE_LOCK"), image: UIImage(systemName: locked ? "lock" : "lock.open")) { [weak self] _ in self?.performToggleLock() }
+        var children = categoryTitleView.selectionMenu?.children ?? []
+        children.append(UIMenu(options: .displayInline, children: [updates, downloads]))
+        children.append(contentsOf: moreBarButton.menu?.children ?? [])
+        if AppSettings.library.lockLibrary.get() { children.append(lock) }
+        return UIMenu(children: children)
+    }
+
     func updateNavbarItems() {
+        navigationItem.title = categoryTitleView.selectionTitle
         if isEditing {
             let allItemsSelected = collectionView.indexPathsForSelectedItems?.count ?? 0 == dataSource.snapshot().itemIdentifiers.count
             navigationItem.leftBarButtonItem = if allItemsSelected {
@@ -556,23 +548,14 @@ extension LibraryViewController {
                 action: #selector(stopEditing)
             )]
         } else {
-            var items: [UIBarButtonItem] = [moreBarButton]
-            if viewModel.isCategoryLocked() {
-                items.append(lockBarButton)
+            if #available(iOS 16.0, *) {
+                navigationItem.rightBarButtonItems = []
+            } else {
+                moreBarButton.menu = makeShelfMenu()
+                navigationItem.rightBarButtonItems = [moreBarButton]
             }
-            items.append(mangaUpdatesButton)
-            navigationItem.rightBarButtonItems = items
             navigationItem.leftBarButtonItem = nil
-            Task { @MainActor in
-                if await DownloadManager.shared.hasQueuedDownloads() {
-                    let index = (navigationItem.rightBarButtonItems?.count ?? 1) - 1
-                    guard !(navigationItem.rightBarButtonItems?.contains(downloadBarButton) ?? true) else { return }
-                    navigationItem.rightBarButtonItems?.insert(
-                        downloadBarButton,
-                        at: index
-                    )
-                }
-            }
+
         }
     }
 
@@ -626,7 +609,11 @@ extension LibraryViewController {
     // updates library empty message
     // should be called when category changes and when library loads initially
     func updateEmptyStack() {
-        emptyStackView.imageSystemName = "books.vertical.fill"
+        emptyStackView.imageSystemName = nil
+        if let image = UIImage(named: "NemuEmptyLibrary") {
+            let width = min(340, max(180, view.bounds.width - 64))
+            emptyStackView.setIllustration(image, size: CGSize(width: width, height: width * image.size.height / image.size.width))
+        }
         emptyStackView.title = viewModel.currentCategory == nil
             ? NSLocalizedString("LIBRARY_EMPTY")
             : NSLocalizedString("CATEGORY_EMPTY")
@@ -712,11 +699,7 @@ extension LibraryViewController {
         let viewController = UIHostingController(rootView: DownloadQueueView())
         viewController.navigationItem.largeTitleDisplayMode = .never
         viewController.navigationItem.title = NSLocalizedString("DOWNLOAD_QUEUE")
-        if #available(iOS 26.0, *) {
-            viewController.preferredTransition = .zoom { _ in
-                self.downloadBarButton
-            }
-        }
+
         viewController.modalPresentationStyle = .pageSheet
         present(viewController, animated: true)
     }
@@ -884,26 +867,13 @@ extension LibraryViewController {
     }
 
     func updateNavbarLock() {
+        // The title menu reads the current lock state when opened.
         guard !isEditing else { return }
-        let shouldShowLockIcon = viewModel.isCategoryLocked()
-        let index = navigationItem.rightBarButtonItems?.firstIndex(of: lockBarButton)
-        if shouldShowLockIcon && index == nil {
-            if navigationItem.rightBarButtonItems?.count ?? 0 == 0 {
-                navigationItem.rightBarButtonItems = [lockBarButton]
-            } else {
-                navigationItem.rightBarButtonItems?.insert(lockBarButton, at: 1)
-            }
-        } else if !shouldShowLockIcon, let index {
-            navigationItem.rightBarButtonItems?.remove(at: index)
-        }
+        updateNavbarItems()
     }
 
     func updateHeaderLockIcons() {
-        guard let header = (collectionView.supplementaryView(
-            forElementKind: UICollectionView.elementKindSectionHeader, at: IndexPath(index: 0)
-        ) as? LibraryCategorySelectionHeader) else {
-            return
-        }
+        let header = categoryTitleView
         if AppSettings.library.lockLibrary.get() {
             let lockedCategories = AppSettings.library.lockedCategories.get()
             header.lockedOptions = [IndexPath(row: 0, section: 0)] + lockedCategories.compactMap { category -> IndexPath? in
@@ -922,11 +892,8 @@ extension LibraryViewController {
 
     // update category options in header
     func updateHeaderCategories() {
-        guard let header = (collectionView.supplementaryView(
-            forElementKind: UICollectionView.elementKindSectionHeader, at: IndexPath(index: 0)
-        ) as? LibraryCategorySelectionHeader) else {
-            return
-        }
+        defer { navigationItem.title = categoryTitleView.selectionTitle }
+        let header = categoryTitleView
 
         ignoreOptionChange = true
         defer { ignoreOptionChange = false }
@@ -1742,5 +1709,14 @@ extension LibraryViewController {
 
             self.updateDataSource()
         }
+    }
+}
+
+// Search appears only when requested; cancelling restores the uncluttered shelf.
+extension LibraryViewController: UISearchControllerDelegate {
+    func didDismissSearchController(_ searchController: UISearchController) {
+        searchController.searchBar.text = ""
+        updateSearchResults(for: searchController)
+        navigationItem.searchController = nil
     }
 }

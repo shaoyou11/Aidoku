@@ -19,6 +19,9 @@ UBIQUITY_KVSTORE_ID         = $(TeamIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER
 // Dev / sideload build (leave flag 'CANONICAL_BUILD' undefined)
 OTHER_SWIFT_FLAGS = $(inherited)
 
+// Personal developer team for cloud and local builds
+DEVELOPMENT_TEAM = NMC7WK2KZ9
+
 // Local personal-team signing
 CODE_SIGN_ENTITLEMENTS = PersonalSigning.entitlements
 #include? "PersonalSigning.local.xcconfig"

@@ -16,6 +16,9 @@ struct SettingsView: View {
     @State private var categoriesLoaded = false
 
     @State private var searchText: String = ""
+    @State private var searchEnabled = false
+    @State private var searchFocused: Bool? = false
+    @StateObject private var incognitoMode = UserDefaultsBool(key: AppSettings.general.incognitoMode.key)
     @State private var searchResult: SettingSearchResult?
 
     @EnvironmentObject private var path: NavigationCoordinator
@@ -27,9 +30,8 @@ extension SettingsView {
     var body: some View {
         List {
             if searchText.isEmpty {
-                ForEach(Self.settings.indices, id: \.self) { offset in
-                    let setting = Self.settings[offset]
-                    SettingView(setting: setting, onChange: onSettingChange)
+                ForEach(Self.settings.indices.filter { !isIncognitoGroup(Self.settings[$0]) }, id: \.self) { offset in
+                    SettingView(setting: Self.settings[offset], onChange: onSettingChange)
                         .settingPageContent(pageContentHandler)
                         .settingCustomContent(customContentHandler)
                 }
@@ -112,12 +114,35 @@ extension SettingsView {
             }
         }
         .listStyle(.insetGrouped)
+        .contentMarginsPlease(.top, 12)
         .overlay {
             if let searchResult, searchResult.sections.isEmpty {
                 UnavailableView.search(text: searchText)
             }
         }
-        .searchable(text: $searchText)
+        .customSearchable(text: $searchText, enabled: $searchEnabled, focused: $searchFocused, stacked: false, onCancel: {
+            searchEnabled = false
+            searchFocused = false
+        })
+        .scrollBackgroundHiddenPlease()
+        .shelfRootChrome()
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                ShelfTitleMenu(title: NSLocalizedString("SETTINGS")) {
+                    Toggle(NSLocalizedString("INCOGNITO_MODE"), isOn: Binding(
+                        get: { incognitoMode.value },
+                        set: { value in
+                            AppSettings.general.incognitoMode.set(value)
+                            NotificationCenter.default.post(name: .init(AppSettings.general.incognitoMode.key), object: value)
+                        }
+                    ))
+                    Button { searchEnabled = true; searchFocused = true } label: {
+                        Label("查找设置", systemImage: "magnifyingglass")
+                    }
+                }
+            }
+        }
         .navigationTitle(NSLocalizedString("SETTINGS"))
         .onChange(of: searchText) { _ in
             search()
@@ -135,6 +160,11 @@ extension SettingsView {
 }
 
 extension SettingsView {
+    private func isIncognitoGroup(_ setting: Setting) -> Bool {
+        guard case let .group(group) = setting.value else { return false }
+        return !group.items.isEmpty && group.items.allSatisfy { $0.key == AppSettings.general.incognitoMode.key }
+    }
+
     func updateCategories() async {
         let (categoriesOnly, categoriesAndGroups) = await CoreDataManager.shared.container.performBackgroundTask { context in
             (

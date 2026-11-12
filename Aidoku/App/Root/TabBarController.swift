@@ -11,6 +11,110 @@ import SwiftUIIntrospect
 
 class TabBarController: UITabBarController {
     private let tabSelectionFeedback = UISelectionFeedbackGenerator()
+    private var libraryBarCollapsed = false
+    private weak var chromeScrollView: UIScrollView?
+    private var chromeTranslation: CGFloat = 0
+    private var chromeDistance: CGFloat = 0
+    private weak var chromeMenuView: UIView?
+    private weak var chromeSearchView: UIView?
+    private var chromeMenuFrame = CGRect.zero
+    private var chromeSearchFrame = CGRect.zero
+    private var chromeAnimator: UIViewPropertyAnimator?
+    private var chromeAnimatorCollapsing = true
+
+    private func updateChromeParts() {
+        guard !libraryBarCollapsed, chromeAnimator == nil, !tabBar.isHidden,
+              UIDevice.current.userInterfaceIdiom == .phone else { return }
+        // Keep UIKit's real search control, glass and symbol untouched. Only the
+        // separate, wide tab platter moves. If UIKit changes this layout, leave it expanded.
+        let parts = tabBar.subviews.filter { !$0.isHidden && $0.alpha > 0.99 }
+        guard let menu = parts.filter({ $0.bounds.width > 120 && (40...90).contains($0.bounds.height) })
+                .max(by: { $0.bounds.width < $1.bounds.width }),
+              let search = parts.first(where: {
+                  (44...90).contains($0.bounds.width) && (44...90).contains($0.bounds.height)
+                      && $0.frame.minX >= menu.frame.maxX && abs($0.frame.midY - menu.frame.midY) < 2
+              }) else { return }
+        chromeMenuView = menu
+        chromeSearchView = search
+        chromeMenuFrame = menu.frame
+        chromeSearchFrame = search.frame
+        // The contracting platter passes behind the original search control.
+        tabBar.bringSubviewToFront(search)
+    }
+
+    private func observeActiveChromeScroll() {
+        guard #available(iOS 26.0, *), UIDevice.current.userInterfaceIdiom == .phone else { return }
+        var rootVisible = selectedViewController !== searchNavigationController
+        if let nav = selectedViewController as? UINavigationController { rootVisible = rootVisible && nav.viewControllers.count == 1 }
+        if selectedIndex == 3, let nav = settingsPath?.navigationController { rootVisible = rootVisible && nav.viewControllers.count == 1 }
+        let next = rootVisible ? selectedViewController?.view.firstScrollView() : nil
+        if next !== chromeScrollView {
+            chromeScrollView?.panGestureRecognizer.removeTarget(self, action: #selector(chromePanChanged(_:)))
+            chromeScrollView = next
+            chromeScrollView?.panGestureRecognizer.addTarget(self, action: #selector(chromePanChanged(_:)))
+            chromeDistance = 0
+        }
+        if !rootVisible { setLibraryBarCollapsed(false, animated: false) }
+    }
+
+    @objc private func chromePanChanged(_ pan: UIPanGestureRecognizer) {
+        guard let scroll = chromeScrollView else { return }
+        let translation = pan.translation(in: scroll).y
+        defer { chromeTranslation = translation }
+        if pan.state == .began { chromeDistance = 0; return }
+        guard pan.state == .changed else { chromeDistance = 0; return }
+        if let nav = selectedViewController as? UINavigationController, nav.topViewController?.isEditing == true { return }
+        let top = -scroll.adjustedContentInset.top
+        let bottom = scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom
+        guard bottom - top > 40 else { return }
+        if scroll.contentOffset.y <= top + 4 { setLibraryBarCollapsed(false); chromeDistance = 0; return }
+        let delta = chromeTranslation - translation
+        if delta * chromeDistance < 0 { chromeDistance = 0 }
+        chromeDistance += delta
+        if abs(chromeDistance) > 28 { setLibraryBarCollapsed(chromeDistance > 0); chromeDistance = 0 }
+    }
+
+    func setLibraryBarCollapsed(_ collapsed: Bool, animated: Bool = true) {
+        guard #available(iOS 26.0, *) else { return }
+        if !animated || UIAccessibility.isReduceMotionEnabled {
+            chromeAnimator?.stopAnimation(true)
+            chromeAnimator = nil
+        } else if libraryBarCollapsed == collapsed { return }
+        if collapsed, !libraryBarCollapsed { updateChromeParts() }
+        guard let menu = chromeMenuView, chromeSearchView != nil, chromeMenuFrame.width > 0 else { return }
+        libraryBarCollapsed = collapsed
+        menu.isUserInteractionEnabled = !collapsed
+        menu.accessibilityElementsHidden = collapsed
+
+        let target = CGAffineTransform(
+            translationX: chromeSearchFrame.midX - chromeMenuFrame.midX,
+            y: chromeSearchFrame.midY - chromeMenuFrame.midY
+        ).scaledBy(x: chromeSearchFrame.width / chromeMenuFrame.width, y: 1)
+        guard animated, !UIAccessibility.isReduceMotionEnabled else {
+            menu.transform = collapsed ? target : .identity
+            menu.alpha = collapsed ? 0 : 1
+            return
+        }
+        // Reversing a gesture reverses the same animation from its current frame.
+        if let animator = chromeAnimator {
+            animator.isReversed = collapsed != chromeAnimatorCollapsing
+            return
+        }
+        // Fresh transitions ease out in either direction; in-flight ones reverse in place.
+        let animator = UIViewPropertyAnimator(duration: 0.28, curve: .easeOut)
+        chromeAnimator = animator
+        chromeAnimatorCollapsing = collapsed
+        animator.addAnimations { menu.transform = collapsed ? target : .identity }
+        animator.addAnimations({ menu.alpha = collapsed ? 0 : 1 }, delayFactor: collapsed ? 0.65 : 0)
+        animator.addCompletion { [weak self, weak animator] _ in
+            guard let self, self.chromeAnimator === animator else { return }
+            self.chromeAnimator = nil
+            menu.transform = self.libraryBarCollapsed ? target : .identity
+            menu.alpha = self.libraryBarCollapsed ? 0 : 1
+        }
+        animator.startAnimation()
+    }
+
     private var originalFrame: CGRect = .zero
     private var shrunkFrame: CGRect = .zero
     private var cancellables: [AnyCancellable] = []
@@ -115,6 +219,7 @@ class TabBarController: UITabBarController {
         searchViewController.navigationBar.prefersLargeTitles = true
 
         if #available(iOS 26.0, *) {
+            tabBarMinimizeBehavior = .never
             let searchTab = UISearchTab { _ in
                 searchViewController
             }
@@ -187,11 +292,18 @@ class TabBarController: UITabBarController {
             ]
         }
 
+        let appearance = UITabBarAppearance()
+        appearance.configureWithDefaultBackground()
+        tabBar.standardAppearance = appearance
+        tabBar.scrollEdgeAppearance = appearance
+
+
         let updateCount = AppSettings.browse.updateCount.get()
         browseViewController.tabBarItem.badgeValue = updateCount > 0 ? String(updateCount) : nil
 
         NotificationCenter.default.publisher(for: .init(AppSettings.general.incognitoMode.key))
             .sink { [weak self] _ in
+                self?.setLibraryBarCollapsed(false, animated: false)
                 self?.updateFrame(animated: true)
             }
             .store(in: &cancellables)
@@ -268,6 +380,11 @@ extension TabBarController {
     }
 
     override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        if #available(iOS 26.0, *) {
+            updateChromeParts()
+            observeActiveChromeScroll()
+        }
         if #unavailable(iOS 26.0) {
             let height: CGFloat = 48
             let padding: CGFloat = 16
@@ -283,6 +400,9 @@ extension TabBarController {
     }
 
     override func viewWillTransition(to size: CGSize, with coordinator: any UIViewControllerTransitionCoordinator) {
+        setLibraryBarCollapsed(false, animated: false)
+        chromeMenuFrame = .zero
+        chromeSearchFrame = .zero
         super.viewWillTransition(to: size, with: coordinator)
         originalFrame = .init(origin: self.originalFrame.origin, size: size)
         shrunkFrame = self.originalFrame
@@ -304,6 +424,8 @@ extension TabBarController {
 extension TabBarController: UITabBarControllerDelegate {
     @available(iOS 18.0, *)
     func tabBarController(_ tabBarController: UITabBarController, didSelectTab selectedTab: UITab, previousTab: UITab?) {
+        setLibraryBarCollapsed(false, animated: false)
+        DispatchQueue.main.async { self.observeActiveChromeScroll() }
         checkForSettingsPop()
     }
 

@@ -30,6 +30,9 @@ class LibraryCategorySelectionHeader: UICollectionReusableView {
     private let titleLabel = UILabel()
     private let menuButton = UIButton(type: .roundedRect)
 
+    var selectionMenu: UIMenu? { menuButton.menu }
+    var selectionTitle: String? { menuButton.currentTitle }
+
     private var selectedSection: Int = 0
     private var selectedOption: Int = 0
 
@@ -44,23 +47,29 @@ class LibraryCategorySelectionHeader: UICollectionReusableView {
     }
 
     func configure() {
-        titleLabel.textColor = .secondaryLabel
-        addSubview(titleLabel)
-
         menuButton.tintColor = .label
         menuButton.setImage(
             UIImage(
-                systemName: "chevron.down",
-                withConfiguration: UIImage.SymbolConfiguration(pointSize: 13)
+                systemName: "chevron.down.circle.fill",
+                withConfiguration: UIImage.SymbolConfiguration(pointSize: 17).applying(UIImage.SymbolConfiguration(paletteColors: [.secondaryLabel, .tertiarySystemFill]))
             ),
             for: .normal
         )
 
         // Move chevron to right side
         menuButton.configuration = .plain()
-        menuButton.configuration?.imagePadding = 3
+        menuButton.configuration?.imagePadding = 8
         menuButton.configuration?.imagePlacement = .trailing
-        menuButton.configuration?.contentInsets = .zero
+        menuButton.configuration?.contentInsets = NSDirectionalEdgeInsets(top: 7, leading: 12, bottom: 7, trailing: 10)
+        menuButton.configuration?.baseForegroundColor = .label
+        menuButton.configuration?.background.backgroundColor = .clear
+        menuButton.configuration?.background.cornerRadius = 18
+        menuButton.configuration?.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var result = attributes
+            result.font = UIFontMetrics(forTextStyle: .subheadline).scaledFont(for: .systemFont(ofSize: 17, weight: .semibold))
+            return result
+        }
+        menuButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
 
         updateMenu()
         menuButton.showsMenuAsPrimaryAction = true
@@ -72,11 +81,10 @@ class LibraryCategorySelectionHeader: UICollectionReusableView {
         menuButton.translatesAutoresizingMaskIntoConstraints = false
 
         NSLayoutConstraint.activate([
-            titleLabel.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 16),
-            titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -4),
-
-            menuButton.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 5),
-            menuButton.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -4)
+            menuButton.centerXAnchor.constraint(equalTo: centerXAnchor),
+            menuButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            menuButton.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor),
+            menuButton.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor)
         ])
     }
 
@@ -102,7 +110,9 @@ class LibraryCategorySelectionHeader: UICollectionReusableView {
         let menu = UIMenu(children: menus)
         menuButton.menu = menu
 
-        let title = options[safe: selectedSection]?.options[safe: selectedOption] ?? ""
+        let title = selectedSection == 0 && selectedOption == 0
+            ? NSLocalizedString("LIBRARY")
+            : options[safe: selectedSection]?.options[safe: selectedOption] ?? ""
         menuButton.setTitle(title, for: .normal)
     }
 

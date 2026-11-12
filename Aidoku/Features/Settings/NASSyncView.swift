@@ -76,9 +76,16 @@ struct NASSyncView: View {
 
             NASConnectionStatusSection()
 
+            if manager.isSyncPausedForCloud {
+                Section {
+                    Label(manager.syncPauseReason, systemImage: "pause.circle")
+                        .font(.footnote).foregroundStyle(.secondary)
+                } header: { Text("书架与进度同步已暂停") }
+                  footer: { Text("NAS 漫画库的浏览、下载和缓存阅读仍可使用。") }
+            }
             Section {
                 Toggle("前台自动同步", isOn: $automatic)
-                    .disabled(dirty || connection.folder.isEmpty)
+                    .disabled(dirty || connection.folder.isEmpty || manager.isSyncPausedForCloud)
                     .onChange(of: automatic) { value in
                         manager.automatic = value
                         manager.stopAutomaticSync()
@@ -90,18 +97,18 @@ struct NASSyncView: View {
                 } label: {
                     NASActionLabel(title: manager.busy && !restoring ? "正在同步…" : "立即同步", systemImage: "arrow.triangle.2.circlepath", busy: manager.busy && !restoring)
                 }
-                .disabled(manager.busy || dirty || connection.folder.isEmpty)
+                .disabled(manager.busy || dirty || connection.folder.isEmpty || manager.isSyncPausedForCloud)
                 Button { confirmRestore = true } label: {
                     NASActionLabel(title: manager.busy && restoring ? "正在恢复…" : "从 NAS 恢复书架与进度", systemImage: "arrow.down.circle", busy: manager.busy && restoring)
                 }
-                    .disabled(manager.busy || dirty || connection.folder.isEmpty)
+                    .disabled(manager.busy || dirty || connection.folder.isEmpty || manager.isSyncPausedForCloud)
                 Text(manager.status).foregroundStyle(.secondary)
                 if let date = manager.lastSync {
                     Text("最近完成：\(date.formatted(date: .numeric, time: .standard))")
                         .font(.footnote)
                 }
             } footer: {
-                Text("打开 App 时同步，使用期间每分钟同步一次。后台不保证执行。修改连接后请先保存。")
+                Text("书架与阅读进度同一时间只使用 NAS 或 iCloud 一种同步。NAS 自动同步在前台每分钟执行，后台不保证执行。修改连接后请先保存。")
             }
             Section {
                 NavigationLink { NASComicLibraryView() } label: {

@@ -14,6 +14,8 @@ class BrowseViewController: BaseTableViewController {
 
     private lazy var dataSource = makeDataSource()
 
+    private let sourceSearchController = UISearchController(searchResultsController: nil)
+
     private lazy var refreshControl = UIRefreshControl()
     private lazy var emptyStackView = EmptyPageStackView()
 
@@ -28,14 +30,23 @@ class BrowseViewController: BaseTableViewController {
 
         title = NSLocalizedString("BROWSE")
 
-        navigationController?.navigationBar.prefersLargeTitles = true
+        navigationItem.largeTitleDisplayMode = .never
+        let appearance = UINavigationBarAppearance()
+        appearance.configureWithTransparentBackground()
+        appearance.shadowColor = .clear
+        appearance.titleTextAttributes = [.font: ShelfTitleStyle.uiFont]
+        navigationItem.standardAppearance = appearance
+        navigationItem.scrollEdgeAppearance = appearance
+        if #available(iOS 26.0, *) { tableView.topEdgeEffect.style = .soft }
+        if #available(iOS 16.0, *) { navigationItem.titleMenuProvider = { [weak self] _ in self?.browseMenu() } }
         navigationItem.hidesSearchBarWhenScrolling = false
 
         // search controller
-        let searchController = UISearchController(searchResultsController: nil)
+        let searchController = sourceSearchController
         searchController.searchResultsUpdater = self
         searchController.obscuresBackgroundDuringPresentation = false
-        navigationItem.searchController = searchController
+        searchController.delegate = self
+        if #unavailable(iOS 16.0) { navigationItem.searchController = searchController }
 
         // toolbar buttons
         let deleteButton = UIBarButtonItem(
@@ -70,7 +81,7 @@ class BrowseViewController: BaseTableViewController {
         tableView.estimatedRowHeight = 72
         tableView.sectionFooterHeight = 8
         tableView.separatorStyle = .none
-        tableView.backgroundColor = .systemBackground
+        tableView.backgroundColor = ShelfPageBackground.color
         tableView.keyboardDismissMode = .onDrag
         tableView.allowsMultipleSelectionDuringEditing = true
 
@@ -672,10 +683,11 @@ extension BrowseViewController {
                 migrateSourcesBarButton.sharesBackground = false
             }
 
-            navigationItem.rightBarButtonItems = [
-                addSourceBarButton,
-                migrateSourcesBarButton
-            ]
+            if #available(iOS 16.0, *) {
+                navigationItem.rightBarButtonItems = []
+            } else {
+                navigationItem.rightBarButtonItems = [addSourceBarButton, migrateSourcesBarButton]
+            }
         }
     }
 
@@ -735,5 +747,27 @@ extension BrowseViewController: @MainActor SourceCellDelegate {
         )
         alert.addAction(UIAlertAction(title: NSLocalizedString("OK"), style: .cancel) { _ in })
         present(alert, animated: true)
+    }
+}
+
+extension BrowseViewController: UISearchControllerDelegate {
+    func browseMenu() -> UIMenu {
+        UIMenu(children: [
+            UIAction(title: NSLocalizedString("ADD_SOURCE"), image: UIImage(systemName: "plus")) { [weak self] _ in self?.openAddSourcePage() },
+            UIAction(title: NSLocalizedString("MIGRATE_SOURCES"), image: UIImage(systemName: "arrow.left.arrow.right")) { [weak self] _ in self?.openMigrateSourcePage() },
+            UIAction(title: "查找图源", image: UIImage(systemName: "magnifyingglass")) { [weak self] _ in
+                guard let self else { return }
+                self.navigationItem.searchController = self.sourceSearchController
+                self.sourceSearchController.isActive = true
+                self.sourceSearchController.searchBar.becomeFirstResponder()
+            },
+            UIAction(title: NSLocalizedString("SELECT"), image: UIImage(systemName: "checkmark.circle")) { [weak self] _ in self?.setEditing(true, animated: true) }
+        ])
+    }
+
+    func didDismissSearchController(_ searchController: UISearchController) {
+        searchController.searchBar.text = ""
+        updateSearchResults(for: searchController)
+        navigationItem.searchController = nil
     }
 }

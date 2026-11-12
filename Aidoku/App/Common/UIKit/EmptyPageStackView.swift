@@ -41,6 +41,21 @@ class EmptyPageStackView: UIStackView {
     }
 
     private let imageView = UIImageView()
+    private var illustrationConstraints: [NSLayoutConstraint] = []
+
+    func setIllustration(_ image: UIImage, size: CGSize) {
+        NSLayoutConstraint.deactivate(illustrationConstraints)
+        imageView.image = image
+        imageView.isHidden = false
+        imageView.isAccessibilityElement = false
+        illustrationConstraints = [
+            imageView.widthAnchor.constraint(equalToConstant: size.width),
+            imageView.heightAnchor.constraint(equalToConstant: size.height)
+        ]
+        NSLayoutConstraint.activate(illustrationConstraints)
+        setCustomSpacing(20, after: imageView)
+    }
+
     private let titleLabel = UILabel()
     private let textLabel = UILabel()
     private let button = UIButton(type: .roundedRect)

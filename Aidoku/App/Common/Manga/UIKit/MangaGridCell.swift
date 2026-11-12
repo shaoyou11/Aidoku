@@ -13,6 +13,42 @@ import UIKit
 class MangaGridCell: UICollectionViewCell {
     var identifier: MangaIdentifier?
 
+    // Opt-in: the draft changes the library only; other grids keep their layout.
+    var usesLibraryShelfStyle = false {
+        didSet {
+            guard oldValue != usesLibraryShelfStyle else { return }
+            updateShelfStyle()
+        }
+    }
+    static var shelfTitleHeight: CGFloat {
+        ceil(UIFontMetrics(forTextStyle: .subheadline).scaledValue(for: 40)) + 8
+    }
+    private var imageBottomConstraint: NSLayoutConstraint?
+    private var titleBottomConstraint: NSLayoutConstraint?
+    private var shelfTitleTopConstraint: NSLayoutConstraint?
+
+    private func updateShelfStyle() {
+        let shelf = usesLibraryShelfStyle
+        contentView.layer.cornerRadius = shelf ? 0 : 5
+        contentView.layer.borderWidth = shelf ? 0 : 1
+        imageView.clipsToBounds = true
+        imageView.layer.cornerCurve = .continuous
+        imageView.layer.cornerRadius = shelf ? 10 : 0
+        imageView.layer.borderWidth = shelf ? 0.5 : 0
+        imageView.layer.borderColor = UIColor.separator.withAlphaComponent(0.18).cgColor
+        overlayView.isHidden = shelf
+        titleLabel.textColor = shelf ? .label : .white
+        titleLabel.font = shelf
+            ? UIFontMetrics(forTextStyle: .subheadline).scaledFont(for: .systemFont(ofSize: 15, weight: .medium))
+            : .systemFont(ofSize: 15, weight: .medium)
+        titleLabel.adjustsFontForContentSizeCategory = shelf
+        imageBottomConstraint?.constant = shelf ? -Self.shelfTitleHeight : 0
+        titleBottomConstraint?.isActive = !shelf
+        shelfTitleTopConstraint?.isActive = shelf
+        highlightView.backgroundColor = UIColor(white: 0, alpha: shelf ? 0.08 : 0.5)
+        setNeedsLayout()
+    }
+
     var title: String? {
         get {
             titleLabel.text
@@ -133,11 +169,15 @@ class MangaGridCell: UICollectionViewCell {
         highlightView.translatesAutoresizingMaskIntoConstraints = false
         selectionView.translatesAutoresizingMaskIntoConstraints = false
 
+        imageBottomConstraint = imageView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
+        imageBottomConstraint?.isActive = true
+        titleBottomConstraint = titleLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8)
+        titleBottomConstraint?.isActive = true
+        shelfTitleTopConstraint = titleLabel.topAnchor.constraint(equalTo: imageView.bottomAnchor, constant: 8)
         NSLayoutConstraint.activate([
             imageView.topAnchor.constraint(equalTo: contentView.topAnchor),
             imageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             imageView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            imageView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
 
             overlayView.topAnchor.constraint(equalTo: contentView.topAnchor),
             overlayView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
@@ -146,7 +186,6 @@ class MangaGridCell: UICollectionViewCell {
 
             titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
             titleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
-            titleLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8),
 
             badgeView.heightAnchor.constraint(equalToConstant: 20),
             badgeView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 5),
@@ -177,6 +216,9 @@ class MangaGridCell: UICollectionViewCell {
     override func layoutSubviews() {
         super.layoutSubviews()
         gradient.frame = contentView.bounds
+        if usesLibraryShelfStyle {
+            imageBottomConstraint?.constant = -Self.shelfTitleHeight
+        }
     }
 
     override func prepareForReuse() {
@@ -185,17 +227,28 @@ class MangaGridCell: UICollectionViewCell {
         imageTask?.cancel()
         imageTask = nil
         highlightView.alpha = 0
+        contentView.layer.removeAllAnimations()
+        contentView.transform = .identity
     }
 }
 
 extension MangaGridCell {
     func highlight() {
         highlightView.alpha = 1
+        guard usesLibraryShelfStyle, !UIAccessibility.isReduceMotionEnabled, !isEditing else { return }
+        UIView.animate(withDuration: 0.14, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
+            self.contentView.transform = CGAffineTransform(scaleX: 0.975, y: 0.975)
+        }
     }
 
     func unhighlight(animated: Bool = true) {
-        UIView.animate(withDuration: animated ? 0.3 : 0) {
+        UIView.animate(
+            withDuration: animated && !UIAccessibility.isReduceMotionEnabled ? 0.28 : 0,
+            delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0,
+            options: [.beginFromCurrentState, .allowUserInteraction]
+        ) {
             self.highlightView.alpha = 0
+            self.contentView.transform = .identity
         }
     }
 
