@@ -6,6 +6,7 @@ struct SourceInfo {
     let iconUrl: URL?
     let name: String
     let altNames: [String]
+    let urls: [String]
     let languages: [String]
     let version: Int
     let contentRating: SourceContentRating
