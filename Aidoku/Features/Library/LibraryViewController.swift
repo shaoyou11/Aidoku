@@ -59,7 +59,60 @@ class LibraryViewController: OldMangaCollectionViewController {
     }
 
     private let categoryTitleView = LibraryCategorySelectionHeader(frame: CGRect(x: 0, y: 0, width: 140, height: 44))
+    private let shelfRefreshIndicator = UIActivityIndicatorView(style: .medium)
+    private lazy var shelfTitleButton: UIButton = {
+        let button = UIButton(type: .system)
+        var config = UIButton.Configuration.plain()
+        config.baseForegroundColor = .label
+        config.contentInsets = .zero
+        config.image = UIImage(systemName: "chevron.down.circle.fill", withConfiguration:
+            UIImage.SymbolConfiguration(pointSize: 17).applying(
+                UIImage.SymbolConfiguration(paletteColors: [.secondaryLabel, .tertiarySystemFill])))
+        config.imagePlacement = .trailing
+        config.imagePadding = 7
+        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var result = attributes
+            result.font = ShelfTitleStyle.uiFont
+            return result
+        }
+        button.configuration = config
+        button.showsMenuAsPrimaryAction = true
+        button.menu = UIMenu(children: [UIDeferredMenuElement.uncached { [weak self] completion in
+            completion(self?.makeShelfMenu().children ?? [])
+        }])
+        button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+        return button
+    }()
+    private lazy var shelfTitleView: UIStackView = {
+        shelfRefreshIndicator.hidesWhenStopped = true
+        shelfRefreshIndicator.isAccessibilityElement = true
+        shelfRefreshIndicator.accessibilityLabel = NSLocalizedString("REFRESHING_LIBRARY")
+        let stack = UIStackView(arrangedSubviews: [shelfTitleButton, shelfRefreshIndicator])
+        stack.axis = .horizontal
+        stack.alignment = .center
+        stack.spacing = 8
+        return stack
+    }()
     private let librarySearchController = UISearchController(searchResultsController: nil)
+
+    func setShelfRefreshProgress(_ progress: Float?) {
+        if let progress {
+            let fraction = progress.isFinite ? min(1, max(0, progress)) : 0
+            shelfRefreshIndicator.accessibilityValue = "\(Int(fraction * 100))%"
+            shelfRefreshIndicator.startAnimating()
+        } else {
+            shelfRefreshIndicator.stopAnimating()
+            shelfRefreshIndicator.accessibilityValue = nil
+        }
+        shelfTitleView.invalidateIntrinsicContentSize()
+    }
+
+    private func updateShelfTitle() {
+        let title = categoryTitleView.selectionTitle ?? NSLocalizedString("LIBRARY")
+        navigationItem.title = title
+        shelfTitleButton.configuration?.title = title
+        navigationItem.titleView = shelfTitleView
+    }
 
     private lazy var refreshControl = UIRefreshControl()
     private lazy var emptyStackView = EmptyPageStackView()
@@ -122,11 +175,7 @@ class LibraryViewController: OldMangaCollectionViewController {
         super.configure()
 
         title = NSLocalizedString("LIBRARY")
-        collectionView.backgroundColor = UIColor { traits in
-            traits.userInterfaceStyle == .dark
-                ? UIColor(red: 9 / 255, green: 10 / 255, blue: 13 / 255, alpha: 1)
-                : UIColor(red: 248 / 255, green: 250 / 255, blue: 254 / 255, alpha: 1)
-        }
+        collectionView.backgroundColor = ShelfPageBackground.color
 
         let shelfAppearance = UINavigationBarAppearance()
         shelfAppearance.configureWithTransparentBackground()
@@ -191,9 +240,7 @@ class LibraryViewController: OldMangaCollectionViewController {
 
         // Keep category selection in the navigation title, above the shelf.
         categoryTitleView.delegate = self
-        if #available(iOS 16.0, *) {
-            navigationItem.titleMenuProvider = { [weak self] _ in self?.makeShelfMenu() }
-        }
+        navigationItem.titleView = shelfTitleView
         updateHeaderCategories()
         updateHeaderLockIcons()
 
@@ -528,7 +575,7 @@ extension LibraryViewController {
     }
 
     func updateNavbarItems() {
-        navigationItem.title = categoryTitleView.selectionTitle
+        updateShelfTitle()
         if isEditing {
             let allItemsSelected = collectionView.indexPathsForSelectedItems?.count ?? 0 == dataSource.snapshot().itemIdentifiers.count
             navigationItem.leftBarButtonItem = if allItemsSelected {
@@ -892,7 +939,7 @@ extension LibraryViewController {
 
     // update category options in header
     func updateHeaderCategories() {
-        defer { navigationItem.title = categoryTitleView.selectionTitle }
+        defer { updateShelfTitle() }
         let header = categoryTitleView
 
         ignoreOptionChange = true

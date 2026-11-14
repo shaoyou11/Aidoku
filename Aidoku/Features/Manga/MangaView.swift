@@ -266,15 +266,8 @@ struct MangaView: View {
             }
             .overlay {
                 if !privacy.allows(viewModel.manga) {
-                    ZStack {
-                        Color(uiColor: .systemBackground).ignoresSafeArea()
-                        VStack(spacing: 12) {
-                            Image(systemName: "eye.slash").font(.largeTitle)
-                            Text("此漫画已隐藏")
-                            Text("返回书架，连续三击底部书架可临时显示。")
-                                .font(.footnote).foregroundStyle(.secondary)
-                        }.padding()
-                    }
+                    // Keep this detail and its scroll position mounted behind a neutral privacy cover.
+                    Color(uiColor: ShelfPageBackground.color).ignoresSafeArea()
                 }
             }
             .environment(\.editMode, $editMode)
