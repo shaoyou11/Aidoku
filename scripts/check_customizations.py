@@ -38,6 +38,10 @@ check('if !privacy.allows(viewModel.manga)' in manga and 'Color(uiColor: ShelfPa
 check('此漫画已隐藏' not in manga and '连续三击底部书架' not in manga,'隐私遮挡不应暴露状态或手势提示')
 lib=text('Aidoku/Features/Library/LibraryViewController.swift')
 check('shelfTitleView' in lib and 'setShelfRefreshProgress' in lib and 'makeShelfMenu()' in lib,'书架标题、菜单或刷新状态定制缺失')
+check('ShelfNavigationTitleView' in lib and 'button.titleLabel?.numberOfLines = 1' in lib and
+      'config.titleLineBreakMode = .byTruncatingTail' in lib,'书架标题的单行布局保护缺失')
+check('shelfRefreshPercentage.text =' in lib and 'shelfRefreshPercentage.isHidden = false' in lib,
+      '刷新进度必须可见，不能只写入无障碍信息')
 tab=text('Aidoku/App/Root/TabBarController.swift')
 check('libraryRefreshAccessory' not in tab and 'libraryRootViewController?.setShelfRefreshProgress' in tab,'刷新状态不应返回底部遮挡书架')
 check('chromeAnimator.isReversed' in tab or 'animator.isReversed' in tab,'底栏可中断动画定制缺失')

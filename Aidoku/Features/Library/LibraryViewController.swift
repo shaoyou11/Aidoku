@@ -10,6 +10,42 @@ import LocalAuthentication
 import SwiftUI
 import AidokuRunner
 
+// UINavigationBar needs an intrinsic width for custom title views. UIStackView alone
+// may be offered a narrow frame and wrap a configured button's Chinese title.
+private final class ShelfNavigationTitleView: UIView {
+    private let content: UIStackView
+
+    init(content: UIStackView) {
+        self.content = content
+        super.init(frame: .zero)
+        addSubview(content)
+        content.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor),
+            content.topAnchor.constraint(equalTo: topAnchor),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override var intrinsicContentSize: CGSize {
+        let size = content.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
+        return CGSize(width: ceil(size.width), height: max(44, ceil(size.height)))
+    }
+}
+
+private final class ShelfRefreshPercentageLabel: UILabel {
+    override var intrinsicContentSize: CGSize {
+        var size = super.intrinsicContentSize
+        guard let font = font else { return size }
+        // A stable width at the current Dynamic Type size, including 0% → 100%.
+        size.width = ceil(("100%" as NSString).size(withAttributes: [.font: font]).width)
+        return size
+    }
+}
+
 class LibraryViewController: OldMangaCollectionViewController {
     let viewModel = LibraryViewModel()
 
@@ -60,11 +96,23 @@ class LibraryViewController: OldMangaCollectionViewController {
 
     private let categoryTitleView = LibraryCategorySelectionHeader(frame: CGRect(x: 0, y: 0, width: 140, height: 44))
     private let shelfRefreshIndicator = UIActivityIndicatorView(style: .medium)
+    private let shelfRefreshPercentage: UILabel = {
+        let label = ShelfRefreshPercentageLabel()
+        label.font = UIFontMetrics(forTextStyle: .caption1).scaledFont(for: .monospacedDigitSystemFont(ofSize: 13, weight: .medium))
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = .secondaryLabel
+        label.textAlignment = .right
+        label.isHidden = true
+        label.isAccessibilityElement = false
+        label.setContentCompressionResistancePriority(.required, for: .horizontal)
+        return label
+    }()
     private lazy var shelfTitleButton: UIButton = {
         let button = UIButton(type: .system)
         var config = UIButton.Configuration.plain()
         config.baseForegroundColor = .label
         config.contentInsets = .zero
+        config.titleLineBreakMode = .byTruncatingTail
         config.image = UIImage(systemName: "chevron.down.circle.fill", withConfiguration:
             UIImage.SymbolConfiguration(pointSize: 17).applying(
                 UIImage.SymbolConfiguration(paletteColors: [.secondaryLabel, .tertiarySystemFill])))
@@ -76,6 +124,8 @@ class LibraryViewController: OldMangaCollectionViewController {
             return result
         }
         button.configuration = config
+        button.titleLabel?.numberOfLines = 1
+        button.setContentCompressionResistancePriority(.required, for: .horizontal)
         button.showsMenuAsPrimaryAction = true
         button.menu = UIMenu(children: [UIDeferredMenuElement.uncached { [weak self] completion in
             completion(self?.makeShelfMenu().children ?? [])
@@ -83,15 +133,16 @@ class LibraryViewController: OldMangaCollectionViewController {
         button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         return button
     }()
-    private lazy var shelfTitleView: UIStackView = {
+    private lazy var shelfTitleView: ShelfNavigationTitleView = {
         shelfRefreshIndicator.hidesWhenStopped = true
         shelfRefreshIndicator.isAccessibilityElement = true
         shelfRefreshIndicator.accessibilityLabel = NSLocalizedString("REFRESHING_LIBRARY")
-        let stack = UIStackView(arrangedSubviews: [shelfTitleButton, shelfRefreshIndicator])
+        shelfRefreshIndicator.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let stack = UIStackView(arrangedSubviews: [shelfTitleButton, shelfRefreshIndicator, shelfRefreshPercentage])
         stack.axis = .horizontal
         stack.alignment = .center
         stack.spacing = 8
-        return stack
+        return ShelfNavigationTitleView(content: stack)
     }()
     private let librarySearchController = UISearchController(searchResultsController: nil)
 
@@ -99,10 +150,14 @@ class LibraryViewController: OldMangaCollectionViewController {
         if let progress {
             let fraction = progress.isFinite ? min(1, max(0, progress)) : 0
             shelfRefreshIndicator.accessibilityValue = "\(Int(fraction * 100))%"
+            shelfRefreshPercentage.text = "\(Int(fraction * 100))%"
+            shelfRefreshPercentage.isHidden = false
             shelfRefreshIndicator.startAnimating()
         } else {
             shelfRefreshIndicator.stopAnimating()
             shelfRefreshIndicator.accessibilityValue = nil
+            shelfRefreshPercentage.isHidden = true
+            shelfRefreshPercentage.text = nil
         }
         shelfTitleView.invalidateIntrinsicContentSize()
     }
@@ -111,6 +166,7 @@ class LibraryViewController: OldMangaCollectionViewController {
         let title = categoryTitleView.selectionTitle ?? NSLocalizedString("LIBRARY")
         navigationItem.title = title
         shelfTitleButton.configuration?.title = title
+        shelfTitleView.invalidateIntrinsicContentSize()
         navigationItem.titleView = shelfTitleView
     }
 
