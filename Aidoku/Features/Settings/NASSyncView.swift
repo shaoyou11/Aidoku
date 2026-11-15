@@ -12,6 +12,8 @@ struct NASSyncView: View {
     @State private var message: String?
     @State private var saveSucceeded = false
     @State private var restoring = false
+    @State private var manualSyncResult: Bool?
+    @State private var restoreResult: Bool?
     @State private var savedConnection = NASConnection()
     private var dirty: Bool { connection != savedConnection }
 
@@ -92,14 +94,16 @@ struct NASSyncView: View {
                         if value { manager.startAutomaticSync() }
                     }
                 Button {
-                    restoring = false
-                    Task { await manager.sync() }
+                    Task { await runManualSync(restoreOnly: false) }
                 } label: {
-                    NASActionLabel(title: manager.busy && !restoring ? "正在同步…" : "立即同步", systemImage: "arrow.triangle.2.circlepath", busy: manager.busy && !restoring)
+                    NASActionLabel(
+                        title: manager.busy && !restoring ? "正在同步…" : manualSyncResult == true ? "已同步 · 再次同步" : manualSyncResult == false ? "再次同步" : "立即同步",
+                        systemImage: manualSyncResult == true ? "checkmark.circle.fill" : "arrow.triangle.2.circlepath",
+                        busy: manager.busy && !restoring)
                 }
                 .disabled(manager.busy || dirty || connection.folder.isEmpty || manager.isSyncPausedForCloud)
                 Button { confirmRestore = true } label: {
-                    NASActionLabel(title: manager.busy && restoring ? "正在恢复…" : "从 NAS 恢复书架与进度", systemImage: "arrow.down.circle", busy: manager.busy && restoring)
+                    NASActionLabel(title: manager.busy && restoring ? "正在恢复…" : restoreResult == true ? "已恢复 · 再次恢复" : "从 NAS 恢复书架与进度", systemImage: restoreResult == true ? "checkmark.circle.fill" : "arrow.down.circle", busy: manager.busy && restoring)
                 }
                     .disabled(manager.busy || dirty || connection.folder.isEmpty || manager.isSyncPausedForCloud)
                 Text(manager.status).foregroundStyle(.secondary)
@@ -139,11 +143,7 @@ struct NASSyncView: View {
         }
         .confirmationDialog("从当前 NAS 文件夹恢复？", isPresented: $confirmRestore, titleVisibility: .visible) {
             Button("恢复书架与进度") {
-                restoring = true
-                Task {
-                    await manager.sync(restoreOnly: true)
-                    restoring = false
-                }
+                Task { await runManualSync(restoreOnly: true) }
             }
         } message: {
             Text("本次恢复只读取并合并，不清空本机书架，不上传覆盖 NAS；开启自动同步后仍会双向合并。恢复前保存本机快照，不恢复漫画图片或 NAS 中已删除的条目。")
@@ -160,6 +160,8 @@ struct NASSyncView: View {
             }
         }
         .onChange(of: connection) { _ in
+            manualSyncResult = nil
+            restoreResult = nil
             if dirty && saveSucceeded {
                 saveSucceeded = false
                 message = "连接信息已修改，请重新保存。"
@@ -178,5 +180,19 @@ struct NASSyncView: View {
             } catch { message = "无法读取连接信息，请解锁设备后重试。" }
         }
 
+    }
+
+    @MainActor private func runManualSync(restoreOnly: Bool) async {
+        guard !manager.busy, !dirty, !connection.folder.isEmpty, !manager.isSyncPausedForCloud else { return }
+        restoring = restoreOnly
+        if restoreOnly { restoreResult = nil } else { manualSyncResult = nil }
+        let before = manager.lastSync
+        let requestedConnection = connection
+        await manager.sync(restoreOnly: restoreOnly)
+        defer { restoring = false }
+        guard connection == requestedConnection, !manager.isSyncPausedForCloud else { return }
+        // Completion comes from the committed sync timestamp, never from an animation timer.
+        let completed = manager.lastSync != nil && manager.lastSync != before
+        if restoreOnly { restoreResult = completed } else { manualSyncResult = completed }
     }
 }

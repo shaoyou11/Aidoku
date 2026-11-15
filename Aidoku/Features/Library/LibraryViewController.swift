@@ -46,6 +46,98 @@ private final class ShelfRefreshPercentageLabel: UILabel {
     }
 }
 
+/// Determinate progress only follows completed work; the native spinner covers preparation.
+private final class ShelfRefreshProgressView: UIView {
+    private let track = CAShapeLayer()
+    private let progress = CAShapeLayer()
+    private let preparing = UIActivityIndicatorView(style: .medium)
+    private let completed = UIImageView(image: UIImage(systemName: "checkmark"))
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        for shape in [track, progress] {
+            shape.fillColor = UIColor.clear.cgColor
+            shape.lineWidth = 2
+            shape.lineCap = .round
+            layer.addSublayer(shape)
+        }
+        progress.strokeEnd = 0
+        addSubview(preparing)
+        completed.contentMode = .scaleAspectFit
+        completed.isHidden = true
+        addSubview(completed)
+        isHidden = true
+        widthAnchor.constraint(equalToConstant: 22).isActive = true
+        heightAnchor.constraint(equalToConstant: 22).isActive = true
+        updateColors()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let path = UIBezierPath(arcCenter: CGPoint(x: bounds.midX, y: bounds.midY), radius: 9,
+                                startAngle: -.pi / 2, endAngle: .pi * 1.5, clockwise: true).cgPath
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        track.frame = bounds
+        progress.frame = bounds
+        track.path = path
+        progress.path = path
+        CATransaction.commit()
+        preparing.center = CGPoint(x: bounds.midX, y: bounds.midY)
+        completed.frame = bounds.insetBy(dx: 5, dy: 5)
+    }
+
+    override func tintColorDidChange() { super.tintColorDidChange(); updateColors() }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        updateColors()
+    }
+
+    private func updateColors() {
+        track.strokeColor = UIColor.tertiaryLabel.resolvedColor(with: traitCollection).cgColor
+        progress.strokeColor = (tintColor ?? .systemBlue).resolvedColor(with: traitCollection).cgColor
+        completed.tintColor = tintColor
+    }
+
+    func setProgress(_ fraction: Float) {
+        isHidden = false
+        completed.isHidden = true
+        let value = CGFloat(fraction)
+        let previous = (progress.presentation() ?? progress).strokeEnd
+        progress.removeAnimation(forKey: "shelf.progress")
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        progress.strokeEnd = value
+        CATransaction.commit()
+        track.isHidden = value == 0
+        progress.isHidden = value == 0
+        if value == 0 { preparing.startAnimating() } else { preparing.stopAnimating() }
+        if value > previous, window != nil, UIApplication.shared.applicationState == .active,
+           !UIAccessibility.isReduceMotionEnabled {
+            let animation = CABasicAnimation(keyPath: "strokeEnd")
+            animation.fromValue = previous
+            animation.toValue = value
+            animation.duration = 0.18
+            animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            progress.add(animation, forKey: "shelf.progress")
+        }
+    }
+
+    func showCompleted() {
+        setProgress(1)
+        completed.isHidden = false
+    }
+
+    func reset() {
+        preparing.stopAnimating()
+        progress.removeAnimation(forKey: "shelf.progress")
+        isHidden = true
+    }
+}
+
 class LibraryViewController: OldMangaCollectionViewController {
     let viewModel = LibraryViewModel()
 
@@ -95,7 +187,9 @@ class LibraryViewController: OldMangaCollectionViewController {
     }
 
     private let categoryTitleView = LibraryCategorySelectionHeader(frame: CGRect(x: 0, y: 0, width: 140, height: 44))
-    private let shelfRefreshIndicator = UIActivityIndicatorView(style: .medium)
+    private let shelfRefreshIndicator = ShelfRefreshProgressView()
+    private var displayedShelfProgress: Float?
+    private var shelfRefreshFeedbackTask: Task<Void, Never>?
     private let shelfRefreshPercentage: UILabel = {
         let label = ShelfRefreshPercentageLabel()
         label.font = UIFontMetrics(forTextStyle: .caption1).scaledFont(for: .monospacedDigitSystemFont(ofSize: 13, weight: .medium))
@@ -134,7 +228,6 @@ class LibraryViewController: OldMangaCollectionViewController {
         return button
     }()
     private lazy var shelfTitleView: ShelfNavigationTitleView = {
-        shelfRefreshIndicator.hidesWhenStopped = true
         shelfRefreshIndicator.isAccessibilityElement = true
         shelfRefreshIndicator.accessibilityLabel = NSLocalizedString("REFRESHING_LIBRARY")
         shelfRefreshIndicator.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -148,24 +241,49 @@ class LibraryViewController: OldMangaCollectionViewController {
 
     func setShelfRefreshProgress(_ progress: Float?) {
         if let progress {
+            shelfRefreshFeedbackTask?.cancel()
+            shelfRefreshFeedbackTask = nil
             let fraction = progress.isFinite ? min(1, max(0, progress)) : 0
+            displayedShelfProgress = fraction
+            shelfRefreshIndicator.accessibilityLabel = NSLocalizedString("REFRESHING_LIBRARY")
             shelfRefreshIndicator.accessibilityValue = "\(Int(fraction * 100))%"
             shelfRefreshPercentage.text = "\(Int(fraction * 100))%"
             shelfRefreshPercentage.isHidden = false
-            shelfRefreshIndicator.startAnimating()
+            shelfRefreshIndicator.setProgress(fraction)
         } else {
-            shelfRefreshIndicator.stopAnimating()
-            shelfRefreshIndicator.accessibilityValue = nil
-            shelfRefreshPercentage.isHidden = true
-            shelfRefreshPercentage.text = nil
+            guard let previous = displayedShelfProgress else { return }
+            displayedShelfProgress = nil
+            if previous >= 1, viewIfLoaded?.window != nil, UIApplication.shared.applicationState == .active {
+                shelfRefreshIndicator.showCompleted()
+                shelfRefreshIndicator.accessibilityLabel = NSLocalizedString("DONE")
+                shelfRefreshFeedbackTask = Task { @MainActor [weak self] in
+                    try? await Task.sleep(nanoseconds: 700_000_000)
+                    guard !Task.isCancelled else { return }
+                    self?.hideShelfRefreshFeedback()
+                }
+            } else { hideShelfRefreshFeedback() }
         }
+        shelfTitleView.invalidateIntrinsicContentSize()
+    }
+
+    private func hideShelfRefreshFeedback() {
+        shelfRefreshIndicator.reset()
+        shelfRefreshIndicator.accessibilityValue = nil
+        shelfRefreshPercentage.isHidden = true
+        shelfRefreshPercentage.text = nil
         shelfTitleView.invalidateIntrinsicContentSize()
     }
 
     private func updateShelfTitle() {
         let title = categoryTitleView.selectionTitle ?? NSLocalizedString("LIBRARY")
+        let changed = shelfTitleButton.configuration?.title != title
         navigationItem.title = title
-        shelfTitleButton.configuration?.title = title
+        let update: () -> Void = { self.shelfTitleButton.configuration?.title = title }
+        if changed, shelfTitleButton.window != nil {
+            UIView.transition(with: shelfTitleButton, duration: UIAccessibility.isReduceMotionEnabled ? 0.1 : 0.18,
+                              options: [.transitionCrossDissolve, .allowAnimatedContent, .beginFromCurrentState],
+                              animations: update)
+        } else { update() }
         shelfTitleView.invalidateIntrinsicContentSize()
         navigationItem.titleView = shelfTitleView
     }
@@ -865,7 +983,7 @@ extension LibraryViewController {
         dataSource.apply(snapshot)
     }
 
-    func updateDataSource() {
+    func updateDataSource(animatingDifferences: Bool = true) {
         var snapshot = NSDiffableDataSourceSnapshot<Section, MangaInfo>()
 
         if !locked {
@@ -879,7 +997,7 @@ extension LibraryViewController {
             snapshot.appendItems(viewModel.manga, toSection: .regular)
         }
 
-        dataSource.apply(snapshot)
+        dataSource.apply(snapshot, animatingDifferences: animatingDifferences)
 
         // handle empty library or category
         if navigationItem.searchController?.searchBar.text?.isEmpty ?? true {
@@ -1373,7 +1491,12 @@ extension LibraryViewController: LibraryCategorySelectionHeaderDelegate {
 
             await viewModel.loadLibrary()
             updateEmptyStack()
-            updateDataSource()
+            if collectionView.window != nil {
+                UIView.transition(with: collectionView, duration: UIAccessibility.isReduceMotionEnabled ? 0.1 : 0.18,
+                                  options: [.transitionCrossDissolve, .allowAnimatedContent, .beginFromCurrentState]) {
+                    self.updateDataSource(animatingDifferences: false)
+                }
+            } else { updateDataSource(animatingDifferences: false) }
         }
     }
 }

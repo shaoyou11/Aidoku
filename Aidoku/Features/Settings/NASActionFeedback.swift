@@ -16,18 +16,28 @@ struct NASActionButtonStyle: ButtonStyle {
 }
 
 struct NASActionLabel: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let title: String
     var systemImage: String
     var busy = false
 
     var body: some View {
         HStack(spacing: 10) {
-            if busy { ProgressView() } else { Image(systemName: systemImage) }
+            ZStack {
+                if busy { ProgressView().transition(.opacity) }
+                else { Image(systemName: systemImage).id(systemImage).transition(.opacity) }
+            }
+            .frame(width: 22, height: 22)
             Text(title)
+                .id(title)
+                .transition(.opacity)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(minHeight: 44, alignment: .leading)
         .accessibilityElement(children: .combine)
+        .animation(.easeOut(duration: reduceMotion ? 0.1 : 0.18), value: busy)
+        .animation(.easeOut(duration: reduceMotion ? 0.1 : 0.18), value: title)
+        .animation(.easeOut(duration: reduceMotion ? 0.1 : 0.18), value: systemImage)
     }
 }
 
